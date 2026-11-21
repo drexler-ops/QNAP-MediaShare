@@ -72,29 +72,39 @@ Steps run in this order: **A (NAS)**, then optionally **B (helper PC)**, then **
 
 ### Alternative to steps A6–A8: deploy from another computer over SSH
 
-If you'd rather not copy files to the NAS or work in an SSH shell, any computer with Docker and this repository can build and start the stack on the NAS remotely. Do steps A1–A5 first.
+If you'd rather not copy files by hand or work in an SSH shell, any computer with **git** and **OpenSSH** (both built into Windows 11) can push the code to the NAS and run it there. You don't need Docker on that computer. Do steps A1–A5 first. (Docker's own remote mode, `docker context`, doesn't work with QNAP: over SSH, Container Station's `docker` isn't on the PATH.)
 
-1. **Key-based SSH** (Docker's SSH connection can't prompt for a password). On your computer:
+1. **Key-based SSH**, so commands run without a password prompt. On your computer:
    ```powershell
-   ssh-keygen -t ed25519            # press Enter to accept the defaults
+   ssh-keygen -t ed25519            # skip if ~/.ssh/id_ed25519 already exists; press Enter for defaults
    type $env:USERPROFILE\.ssh\id_ed25519.pub
    ```
-   Copy the printed line. Then sign in once with your password and add it to the NAS:
+   Then, **in a normal PowerShell window** (it has to prompt for your NAS password):
    ```powershell
-   ssh <nas-admin>@<nas>
-   mkdir -p ~/.ssh && echo "<paste the line here>" >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
-   exit
-   ssh <nas-admin>@<nas> "docker version --format '{{.Server.Version}}'"   # must print a version with no password prompt
+   ssh <nas-admin>@<nas> "mkdir -p ~/.ssh && echo '<paste the line here>' >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys && echo KEY-ADDED"
+   ssh -o BatchMode=yes <nas-admin>@<nas> echo key-login-ok     # must work with no password prompt
    ```
-   > On QNAP, the admin's home folder may be reset when the NAS reboots. If key login stops working after a reboot, repeat this step, or enable home folders under **Control Panel → Users → Advanced Settings**.
+   > If the password is refused: in **Control Panel → Network & File Services → Telnet / SSH → Edit Access Permission**, make sure the account is allowed to use SSH. If key login stops working after a NAS reboot, enable home folders under **Control Panel → Users → Advanced Settings** and repeat this step.
 2. **Configuration file:** create `.env.live` next to `docker-compose.yml` on your computer (copy `.env.example`). The paths in it are **paths on the NAS** (e.g. `/share/Multimedia`). It is gitignored; keep it safe, because it holds the secrets.
-3. **Deploy** (this is also the update command after a `git pull`):
-   ```powershell
-   docker context create nas --docker "host=ssh://<nas-admin>@<nas>"
-   docker --context nas compose --env-file .env.live up -d --build
-   docker --context nas compose --env-file .env.live logs api | Select-String -Context 0,6 "admin account"
+3. **Deploy.** From the repository folder (Git Bash or PowerShell). This is also the update procedure after a `git pull`:
+   ```sh
+   git archive --format=tar HEAD | ssh <nas-admin>@<nas> "tar -x -C /share/Container/photo-audit/app"
+   scp .env.live <nas-admin>@<nas>:/share/Container/photo-audit/app/.env
+   ssh <nas-admin>@<nas> "chmod 600 /share/Container/photo-audit/app/.env; chmod +x /share/Container/photo-audit/app/qnap-compose.sh"
+   ssh <nas-admin>@<nas> "/share/Container/photo-audit/app/qnap-compose.sh up -d --build"
    ```
-   The project files are sent to the NAS and built there. Continue with step A9.
+   The build runs on the NAS (5–15 minutes the first time). Get the admin password with
+   `ssh <nas-admin>@<nas> "/share/Container/photo-audit/app/qnap-compose.sh logs api" | findstr password:`
+   (`grep password:` in Git Bash), then continue with step A9.
+
+**Managing Live afterwards** uses the same wrapper, which finds Container Station's docker and gives it a writable config folder:
+```sh
+ssh <nas-admin>@<nas> /share/Container/photo-audit/app/qnap-compose.sh ps
+ssh <nas-admin>@<nas> /share/Container/photo-audit/app/qnap-compose.sh logs --tail 100 worker
+ssh <nas-admin>@<nas> /share/Container/photo-audit/app/qnap-compose.sh restart
+ssh <nas-admin>@<nas> /share/Container/photo-audit/app/qnap-compose.sh exec api python -m app.cli users
+```
+In an SSH shell on the NAS, `cd /share/Container/photo-audit/app && ./qnap-compose.sh <command>` does the same.
 
 ---
 
