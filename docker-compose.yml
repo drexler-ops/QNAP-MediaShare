@@ -1,0 +1,77 @@
+# Photo Audit — the permanent stack that runs on the NAS (or any Docker host that can see the media).
+#
+#   docker compose up -d --build
+#
+# All deployment-specific settings live in .env (copy .env.example). See README "Configuration".
+name: photo-audit
+
+x-app-env: &app-env
+  DB_HOST: db
+  DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+  LIBRARY_ROOT: /library
+  THUMBS_ROOT: /thumbs
+  QUARANTINE_DIRNAME: ${QUARANTINE_DIRNAME:-.quarantine}
+  TZ: ${TZ:-UTC}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: photoaudit
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: photoaudit
+    command: ["postgres", "-c", "shared_buffers=${DB_SHARED_BUFFERS:-512MB}", "-c", "max_connections=60"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # LAN access for the optional helper-PC worker during the initial scan. Remove afterwards if you like.
+      - "${DB_PUBLISH_PORT:-5432}:5432"
+    mem_limit: ${DB_MEM_LIMIT:-1g}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U photoaudit -d photoaudit"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: { context: ., target: runtime }
+    image: photo-audit:latest
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      <<: *app-env
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      APP_NAME: ${APP_NAME:-}
+      MAP_TILE_URL: ${MAP_TILE_URL:-}
+      MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
+      RUN_MIGRATIONS: "true"
+    volumes:
+      - ${LIBRARY_PATH:?set LIBRARY_PATH in .env}:/library
+      - ${THUMBS_PATH:?set THUMBS_PATH in .env}:/thumbs
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    mem_limit: ${API_MEM_LIMIT:-768m}
+
+  worker:
+    image: photo-audit:latest
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_started }
+    environment:
+      <<: *app-env
+      WORKER_NAME: nas
+      WORKER_CONCURRENCY: ${NAS_WORKER_CONCURRENCY:-2}
+      SCHEDULER_ENABLED: "true"
+    volumes:
+      - ${LIBRARY_PATH}:/library
+      - ${THUMBS_PATH}:/thumbs
+    mem_limit: ${WORKER_MEM_LIMIT:-2g}
+
+volumes:
+  pgdata:

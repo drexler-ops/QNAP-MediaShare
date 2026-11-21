@@ -1,0 +1,5 @@
+# Keep LF line endings everywhere: files are copied from Windows to a Linux NAS / containers.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary

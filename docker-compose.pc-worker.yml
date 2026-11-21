@@ -1,0 +1,43 @@
+# Photo Audit — OPTIONAL, TEMPORARY extra worker for a helper Windows/Mac/Linux PC (initial bulk scan).
+#
+#   docker compose -f docker-compose.pc-worker.yml --env-file .env.pc-worker up --build
+#
+# It connects to the database on the NAS and mounts the NAS shares over SMB directly
+# (Docker-managed CIFS volumes), so no mapped drives are needed. Stop it with Ctrl+C,
+# then `docker compose -f docker-compose.pc-worker.yml --env-file .env.pc-worker down -v`.
+name: photo-audit-pc
+
+services:
+  worker:
+    build: { context: ., target: runtime }
+    image: photo-audit:latest
+    command: ["python", "-m", "app.worker"]
+    restart: "no"
+    environment:
+      DB_HOST: ${NAS_IP:?set NAS_IP in .env.pc-worker}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env.pc-worker}
+      LIBRARY_ROOT: /library
+      THUMBS_ROOT: /thumbs
+      QUARANTINE_DIRNAME: ${QUARANTINE_DIRNAME:-.quarantine}
+      WORKER_NAME: pc
+      WORKER_CONCURRENCY: ${PC_WORKER_CONCURRENCY:-4}
+      SCHEDULER_ENABLED: "false"
+      RUN_MIGRATIONS: "false"
+    volumes:
+      - library:/library:ro
+      - thumbs:/thumbs
+
+volumes:
+  library:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: "//${NAS_IP}/${SMB_LIBRARY_SHARE:?set SMB_LIBRARY_SHARE in .env.pc-worker}"
+      o: "addr=${NAS_IP},username=${SMB_USER},password=${SMB_PASSWORD},vers=${SMB_VERSION:-3.0},ro,iocharset=utf8,noserverino"
+  thumbs:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: "//${NAS_IP}/${SMB_THUMBS_PATH:?set SMB_THUMBS_PATH in .env.pc-worker}"
+      o: "addr=${NAS_IP},username=${SMB_USER},password=${SMB_PASSWORD},vers=${SMB_VERSION:-3.0},rw,iocharset=utf8,noserverino,file_mode=0664,dir_mode=0775"
