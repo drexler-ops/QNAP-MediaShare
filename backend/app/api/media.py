@@ -1,8 +1,9 @@
-"""Thumbnails, originals and browser-playable video previews."""
+"""Thumbnails, in-app viewing (full-size images, playable videos) and explicit downloads."""
 from __future__ import annotations
 
 import os
 import posixpath
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -12,12 +13,15 @@ from sqlalchemy.orm import Session
 from ..jobs import enqueue
 from ..models import File, Job, User
 from ..paths import abs_path
-from ..scanner.thumbs import preview_path, thumb_path
+from ..scanner.hashing import open_image_bytes
+from ..scanner.thumbs import full_path, preview_path, thumb_path
 from .deps import current_user, get_db
 
 router = APIRouter(prefix="/api/files", tags=["media"])
 
 BROWSER_SAFE_VIDEO = {"h264"}
+# Image formats every browser renders natively (served as-is); others are converted once to JPEG.
+BROWSER_SAFE_IMAGE = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
 CACHE = {"Cache-Control": "private, max-age=86400"}
 
 
@@ -38,23 +42,43 @@ def thumb(file_id: int, size: str = "s", db: Session = Depends(get_db), _: User 
     return FileResponse(path, media_type="image/webp", headers=CACHE)
 
 
-@router.get("/{file_id}/original")
-def original(
-    file_id: int, download: bool = False, db: Session = Depends(get_db), _: User = Depends(current_user)
-):
-    f = _file(db, file_id)
+def _source(f: File) -> str:
     if f.status == "purged":
         raise HTTPException(410, "This file was permanently deleted")
     path = abs_path(f.path)
     if not os.path.isfile(path):
         raise HTTPException(404, "File is not on disk")
+    return path
+
+
+@router.get("/{file_id}/full")
+def full(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    """Full-resolution image the browser can display inline (for the in-app viewer; never a download)."""
+    f = _file(db, file_id)
+    if f.kind != "image":
+        raise HTTPException(400, "Not an image")
+    src = _source(f)
+    if f.ext in BROWSER_SAFE_IMAGE:
+        return FileResponse(src, media_type=BROWSER_SAFE_IMAGE[f.ext], headers=CACHE)
+    out = full_path(f.id)
+    if not os.path.isfile(out):
+        with open(src, "rb") as fh:
+            img = open_image_bytes(fh.read(), f.ext, src)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        tmp = f"{out}.{uuid.uuid4().hex}.tmp"
+        img.save(tmp, "JPEG", quality=90, optimize=True)
+        os.replace(tmp, out)
+    return FileResponse(out, media_type="image/jpeg", headers=CACHE)
+
+
+@router.get("/{file_id}/original")
+def original(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    """The untouched original file, always as a download (viewing happens in-app via /full and /preview)."""
+    f = _file(db, file_id)
+    src = _source(f)
     name = posixpath.basename(f.original_path or f.path)
-    return FileResponse(
-        path,
-        media_type=f.mime or None,
-        filename=name,
-        content_disposition_type="attachment" if download else "inline",
-    )
+    return FileResponse(src, media_type=f.mime or "application/octet-stream", filename=name,
+                        content_disposition_type="attachment")
 
 
 def _direct_playable(f: File) -> bool:

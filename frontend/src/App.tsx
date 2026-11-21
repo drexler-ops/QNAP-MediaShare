@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { api, ApiError, post, type Me } from "./api";
 import { Brand, Icons, Loading, useAppConfig } from "./ui";
+import { ViewerProvider } from "./components/MediaViewer";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Review from "./pages/Review";
@@ -52,6 +53,7 @@ function Shell({ me }: { me: Me }) {
   };
 
   return (
+    <ViewerProvider>
     <div className="app">
       <nav className="sidebar" aria-label="Main">
         <Brand />
@@ -88,5 +90,6 @@ function Shell({ me }: { me: Me }) {
         </Routes>
       </main>
     </div>
+    </ViewerProvider>
   );
 }

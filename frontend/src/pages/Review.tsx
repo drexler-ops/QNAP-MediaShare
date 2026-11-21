@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, post, qs, type Facets, type GroupDetail, type GroupMember, type GroupType, type Me } from "../api";
 import { StillView, VideoPlayer } from "../components/MediaView";
+import { useViewer } from "../components/MediaViewer";
 import { Loading, Modal, useToast } from "../ui";
-import { bytes, camera, cls, date, dims, duration, megapixels, originalUrl, STATUS_LABEL, TYPE_HINT, TYPE_LABEL } from "../util";
+import { bytes, camera, cls, date, dims, duration, megapixels, STATUS_LABEL, TYPE_HINT, TYPE_LABEL } from "../util";
 
 type Action = "keep" | "delete";
 const LOCKED_STATES = ["approved", "quarantined", "purged"];
@@ -108,8 +109,15 @@ export default function Review({ me }: { me: Me }) {
   const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
   const [playing, setPlaying] = useState<number | null>(null);
   const [help, setHelp] = useState(false);
+  const viewer = useViewer();
 
   const g = group.data;
+  const openViewer = useCallback(
+    (i: number) => {
+      if (g) viewer.open(g.members.map((m) => ({ item: m.id, file: m.primary.id })), i);
+    },
+    [g, viewer],
+  );
   useEffect(() => {
     if (!g) return;
     setDraft(Object.fromEntries(g.members.map((m) => [m.id, initialAction(m, g.type)])));
@@ -193,7 +201,7 @@ export default function Review({ me }: { me: Me }) {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
       if (["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (!g) return;
+      if (!g || viewer.isOpen) return;
       const m = g.members[focus];
       const k = e.key.toLowerCase();
       if (k === "arrowright") next();
@@ -214,12 +222,13 @@ export default function Review({ me }: { me: Me }) {
       else if (k === "z") setZoom((z) => (z > 1 ? 1 : 2.5));
       else if (k === "n") dismiss.mutate();
       else if (k === "?") setHelp((h) => !h);
+      else if (k === "v") openViewer(focus);
       else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [g, focus, next, prev, setAction, keptCount, save, dismiss, editable.length]);
+  }, [g, focus, next, prev, setAction, keptCount, save, dismiss, editable.length, viewer.isOpen, openViewer]);
 
   const filters = (
     <div className="row">
@@ -315,7 +324,12 @@ export default function Review({ me }: { me: Me }) {
                   className={cls("mcard", a, i === focus && "focus")}
                   onClick={() => setFocus(i)}
                 >
-                  <div className="viewer" onMouseLeave={() => setPoint(null)}>
+                  <div
+                    className="viewer"
+                    onMouseLeave={() => setPoint(null)}
+                    onDoubleClick={(e) => { e.stopPropagation(); openViewer(i); }}
+                    title="Double-click to view full screen"
+                  >
                     <div className="ribbon">
                       <span className={cls("badge", a)}>{a === "keep" ? "KEEP" : "DELETE"}</span>
                       {m.suggested_keep && <span className="badge keep">★ Suggested keeper</span>}
@@ -382,9 +396,9 @@ export default function Review({ me }: { me: Me }) {
                       Delete <kbd>D</kbd>
                     </button>
                     {f.status !== "purged" && (
-                      <a className="btn sm ghost" href={originalUrl(f.id)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="Open original file">
-                        ↗
-                      </a>
+                      <button className="btn sm ghost" onClick={(e) => { e.stopPropagation(); setFocus(i); openViewer(i); }} title="View full screen (V)">
+                        ⤢ View
+                      </button>
                     )}
                   </div>
                 </div>
@@ -430,6 +444,7 @@ export default function Review({ me }: { me: Me }) {
               <span><kbd>1</kbd>–<kbd>9</kbd> select</span>
               <span><kbd>Space</kbd> toggle</span>
               <span><kbd>Z</kbd> zoom {zoom > 1 ? "on" : "off"}</span>
+              <span><kbd>V</kbd> view</span>
               <span><kbd>←</kbd><kbd>→</kbd> groups</span>
               <button className="btn ghost sm" onClick={() => setHelp(true)}><kbd>?</kbd> help</button>
             </div>
@@ -463,6 +478,7 @@ export default function Review({ me }: { me: Me }) {
             <dt><kbd>N</kbd></dt><dd>Not duplicates (dismiss the group)</dd>
             <dt><kbd>←</kbd> / <kbd>→</kbd></dt><dd>Previous / next group</dd>
             <dt><kbd>Z</kbd></dt><dd>Zoom loupe — hover any photo; all copies zoom to the same spot</dd>
+            <dt><kbd>V</kbd> / double-click</dt><dd>View the selected copy full screen (full resolution, videos play); ← → steps through the group</dd>
           </dl>
           <p className="muted small">
             Saving only <em>marks</em> files. Each owner approves deletion of their own files under Approvals; approved files move

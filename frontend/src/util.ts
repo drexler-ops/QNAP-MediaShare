@@ -43,7 +43,10 @@ export function camera(f: Pick<FileInfo, "make" | "model">): string {
 }
 
 export const thumbUrl = (fileId: number, size: "s" | "l" = "s") => `/api/files/${fileId}/thumb?size=${size}`;
-export const originalUrl = (fileId: number, download = false) => `/api/files/${fileId}/original${download ? "?download=true" : ""}`;
+/** The untouched original, always delivered as a download. Viewing happens in-app (MediaViewer). */
+export const downloadUrl = (fileId: number) => `/api/files/${fileId}/original`;
+/** Full-resolution, browser-displayable image (HEIC/TIFF/RAW are converted server-side). */
+export const fullUrl = (fileId: number) => `/api/files/${fileId}/full`;
 
 export const TYPE_LABEL: Record<GroupType, string> = {
   exact: "Exact copies",

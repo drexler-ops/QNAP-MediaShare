@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, post, type Me, type PendingRow } from "../api";
-import ItemModal from "../components/ItemModal";
+import { useViewer, type ViewerEntry } from "../components/MediaViewer";
 import { Confirm, Loading, Thumb, useToast } from "../ui";
 import { bytes, date, dims } from "../util";
 
@@ -17,7 +17,13 @@ export default function Pending({ me }: { me: Me }) {
   const q = useQuery({ queryKey: ["pending"], queryFn: () => api<{ to_approve: PendingRow[]; waiting_on_others: PendingRow[] }>("/api/pending") });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirm, setConfirm] = useState<number[] | null>(null);
-  const [view, setView] = useState<number | null>(null);
+  const viewer = useViewer();
+  const compare = (r: PendingRow, which: "kept" | "item") => {
+    const entries: ViewerEntry[] = [];
+    if (r.kept) entries.push({ item: r.kept.id, file: r.kept.primary.id });
+    entries.push({ item: r.item.id, file: r.item.primary.id });
+    viewer.open(entries, which === "kept" ? 0 : entries.length - 1);
+  };
 
   const refresh = () => {
     setSelected(new Set());
@@ -111,7 +117,7 @@ export default function Pending({ me }: { me: Me }) {
                   </td>
                   <td>
                     {r.kept ? (
-                      <div className="row" style={{ cursor: "pointer" }} onClick={() => setView(r.kept!.id)}>
+                      <div className="row" style={{ cursor: "pointer" }} onClick={() => compare(r, "kept")} title="View (← → to compare with the copy to delete)">
                         <Thumb file={r.kept.primary} size={72} live={r.kept.is_live_photo} />
                         <div className="small">
                           <div>{r.kept.primary.name}</div>
@@ -123,7 +129,7 @@ export default function Pending({ me }: { me: Me }) {
                     )}
                   </td>
                   <td>
-                    <div className="row" style={{ cursor: "pointer" }} onClick={() => setView(r.item.id)}>
+                    <div className="row" style={{ cursor: "pointer" }} onClick={() => compare(r, "item")} title="View (← → to compare with the kept copy)">
                       <Thumb file={r.item.primary} size={72} live={r.item.is_live_photo} />
                       <div className="small">
                         <div style={{ fontWeight: 600 }}>{r.item.primary.name}</div>
@@ -200,7 +206,6 @@ export default function Pending({ me }: { me: Me }) {
           </p>
         </Confirm>
       )}
-      {view && <ItemModal itemId={view} onClose={() => setView(null)} />}
     </>
   );
 }

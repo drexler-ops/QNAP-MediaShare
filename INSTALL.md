@@ -174,6 +174,7 @@ This PC runs a second worker to help with the first index of a large library. It
 ## Day-to-day
 
 - **Reviewing.** Use **Overview → Start reviewing**. Keyboard shortcuts: `1`–`9` select a copy, `K` keep, `D` delete, `Enter` save and go to the next group, `S` skip, `Z` zoom, `?` show help.
+- **Viewing.** Click any photo or video (Browse, Map, Approvals, Quarantine), or press `V` / double-click in Review, to open the full-screen viewer: `←` `→` browse, `+` `−` `0` zoom (or mouse wheel / double-click, drag to pan), `F` full screen, `I` info, `L` Live Photo motion, `Esc` close. Nothing is downloaded unless you press **Download**.
 - **Approvals.** Every deletion needs the **file owner's** approval (the **Approvals** page shows a red badge). Files outside every user's folder are "unassigned", and anyone can approve them.
 - **Quarantine.** Approved files stay restorable for 30 days by default. **Purge eligible** removes them for good. Auto-purge is off unless you enable it in Settings.
 - **Forgotten password.** An admin opens **Settings → Users** and clicks **Reset password** next to the person. They're signed out, and the next time they sign in (name only, empty password) they choose a new password.

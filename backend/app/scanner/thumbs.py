@@ -22,6 +22,24 @@ def preview_path(file_id: int) -> str:
     return os.path.join(_dir_for(file_id), f"{file_id}_preview.mp4")
 
 
+def full_path(file_id: int) -> str:
+    """Full-resolution JPEG rendition for formats browsers can't display (HEIC, TIFF, RAW...)."""
+    return os.path.join(_dir_for(file_id), f"{file_id}_full.jpg")
+
+
+def _remove(*paths: str) -> None:
+    for p in paths:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+def clear_derived(file_id: int) -> None:
+    """Drop on-demand renditions (full-size image, video preview) after the source file changed."""
+    _remove(full_path(file_id), preview_path(file_id))
+
+
 def make_thumbs(img: Image.Image, file_id: int) -> None:
     os.makedirs(_dir_for(file_id), exist_ok=True)
     for size, edge in SIZES.items():
@@ -35,8 +53,4 @@ def make_thumbs(img: Image.Image, file_id: int) -> None:
 
 
 def delete_thumbs(file_id: int) -> None:
-    for p in (thumb_path(file_id, "s"), thumb_path(file_id, "l"), preview_path(file_id)):
-        try:
-            os.remove(p)
-        except OSError:
-            pass
+    _remove(thumb_path(file_id, "s"), thumb_path(file_id, "l"), preview_path(file_id), full_path(file_id))

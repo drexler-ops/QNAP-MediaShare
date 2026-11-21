@@ -4,7 +4,7 @@ import { thumbUrl } from "../util";
 import { Spinner } from "../ui";
 
 /** Plays a video, asking the server for a browser-friendly preview (HEVC is transcoded on demand). */
-export function VideoPlayer({ file, autoPlay }: { file: FileInfo; autoPlay?: boolean }) {
+export function VideoPlayer({ file, autoPlay, loop }: { file: FileInfo; autoPlay?: boolean; loop?: boolean }) {
   const [status, setStatus] = useState<"checking" | "ready" | "processing" | "failed">("checking");
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +41,7 @@ export function VideoPlayer({ file, autoPlay }: { file: FileInfo; autoPlay?: boo
         poster={file.thumb ? thumbUrl(file.id, "l") : undefined}
         controls
         autoPlay={autoPlay}
+        loop={loop}
         playsInline
         onClick={(e) => e.stopPropagation()}
       />

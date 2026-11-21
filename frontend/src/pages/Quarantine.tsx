@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, post, type QuarantineRow } from "../api";
-import ItemModal from "../components/ItemModal";
+import { useViewer } from "../components/MediaViewer";
 import { Confirm, Loading, Thumb, useToast } from "../ui";
 import { bytes, date } from "../util";
 
@@ -19,7 +19,7 @@ export default function Quarantine() {
   const q = useQuery({ queryKey: ["quarantine"], queryFn: () => api<QData>("/api/quarantine") });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirmPurge, setConfirmPurge] = useState(false);
-  const [view, setView] = useState<number | null>(null);
+  const viewer = useViewer();
 
   const refresh = () => {
     setSelected(new Set());
@@ -104,7 +104,7 @@ export default function Quarantine() {
                   <td>
                     <input type="checkbox" checked={selected.has(r.item.id)} onChange={() => toggle(r.item.id)} aria-label="Select" />
                   </td>
-                  <td style={{ width: 70, cursor: "pointer" }} onClick={() => setView(r.item.id)}>
+                  <td style={{ width: 70, cursor: "pointer" }} onClick={() => viewer.open(d.items.map((x) => ({ item: x.item.id, file: x.item.primary.id })), d.items.indexOf(r))}>
                     <Thumb file={r.item.primary} size={52} live={r.item.is_live_photo} />
                   </td>
                   <td>
@@ -142,7 +142,6 @@ export default function Quarantine() {
           <div className="banner error small">This can't be undone (unless you have NAS snapshots/backups).</div>
         </Confirm>
       )}
-      {view && <ItemModal itemId={view} onClose={() => setView(null)} />}
     </>
   );
 }

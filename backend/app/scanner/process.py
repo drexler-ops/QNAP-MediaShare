@@ -65,10 +65,12 @@ def _process_image(f: File, full: str) -> None:
     f.phash = hashing.phash(img)
     f.dhash = hashing.dhash(img)
     thumbs.make_thumbs(img, f.id)
+    thumbs.clear_derived(f.id)  # a changed file must not keep serving its old full-size rendition
     f.thumb_ready = True
 
 
 def _process_video(f: File, full: str) -> None:
+    thumbs.clear_derived(f.id)
     info = video.probe(full)
     f.duration = info.duration or f.duration
     f.width = info.width or f.width

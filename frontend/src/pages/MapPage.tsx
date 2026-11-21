@@ -6,7 +6,7 @@ import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import { api, qs, type Facets } from "../api";
-import ItemModal from "../components/ItemModal";
+import { useViewer } from "../components/MediaViewer";
 import { thumbUrl } from "../util";
 import { useAppConfig } from "../ui";
 import { FilterBar, type BrowseFilters } from "./Browse";
@@ -15,7 +15,7 @@ export default function MapPage() {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.MarkerClusterGroup | null>(null);
-  const [view, setView] = useState<number | null>(null);
+  const viewer = useViewer();
   const cfg = useAppConfig();
   const [filters, setFilters] = useState<BrowseFilters>({
     owner: "", kind: "", has_exif: "", has_gps: "", camera: "", date_from: "", date_to: "", q: "", status: "", sort: "", live: "",
@@ -37,7 +37,7 @@ export default function MapPage() {
       e.popup.getElement()?.querySelectorAll<HTMLElement>("[data-item]").forEach((node) =>
         node.addEventListener("click", () => {
           m.closePopup();
-          setView(Number(node.dataset.item));
+          viewer.open([{ item: Number(node.dataset.item), file: Number(node.dataset.file) }]);
         }),
       );
     });
@@ -55,7 +55,7 @@ export default function MapPage() {
     const cluster = L.markerClusterGroup({ chunkedLoading: true, showCoverageOnHover: false, maxClusterRadius: 50 });
     const markers = points.data.points.map(([fileId, itemId, lat, lon]) =>
       L.circleMarker([lat, lon], { radius: 6, color: "#fff", weight: 1.5, fillColor: "#4f6bed", fillOpacity: 0.9 }).bindPopup(
-        `<img src="${thumbUrl(fileId)}" data-item="${itemId}" alt="" /><a href="#" data-item="${itemId}" onclick="return false">Open details</a>`,
+        `<img src="${thumbUrl(fileId)}" data-item="${itemId}" data-file="${fileId}" alt="" /><a href="#" data-item="${itemId}" data-file="${fileId}" onclick="return false">View</a>`,
       ),
     );
     cluster.addLayers(markers as unknown as L.Layer[]);
@@ -72,7 +72,6 @@ export default function MapPage() {
       </div>
       <FilterBar value={filters} onChange={setFilters} facets={facets.data} compact />
       <div ref={el} className="map" />
-      {view && <ItemModal itemId={view} onClose={() => setView(null)} />}
     </>
   );
 }

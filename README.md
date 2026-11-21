@@ -14,6 +14,7 @@ A self-hosted web app for a shared NAS media library (built and tested for QNAP,
   - *Similar shots*: bursts taken seconds apart. Nothing is suggested for deletion here by default.
 - **Suggests a keeper.** The score favours EXIF richness and GPS first, then resolution, then original format (HEIC/RAW/MOV over JPG; copies named like messaging-app files are penalised). The UI explains the choice and warns when a decision would delete the only copy with GPS, EXIF, a capture date, Live Photo motion or the highest resolution.
 - **Deletion workflow.** A person marks files, the **owner** approves, and the file moves to the quarantine folder (`QUARANTINE_DIRNAME`) on the same volume. From there it can be restored, or purged after N days. The server refuses to delete the last copy in a group. Every action goes in the audit log.
+- **In-app media viewer.** Full screen: photos at full resolution (HEIC/TIFF/RAW converted once on the server), zoom/pan, videos played in-browser (HEVC transcoded on demand), Live Photo motion, filmstrip and ← → through the current list, metadata panel. Originals are only downloaded through an explicit **Download** button.
 - **Other pages:** Browse (filters for owner, date, camera, EXIF, GPS, Live Photos), Map (Leaflet clusters), Settings (thresholds, keeper weights, users and folders (admin), scan schedule, system status).
 - **v2 (not built yet):** face recognition. The schema already has `people`/`faces` placeholders.
 

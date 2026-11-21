@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs, type Facets, type ItemInfo } from "../api";
-import ItemModal from "../components/ItemModal";
+import { useViewer } from "../components/MediaViewer";
 import { Loading, Thumb } from "../ui";
 import { date } from "../util";
 
@@ -97,7 +97,7 @@ export function FilterBar({
 export default function Browse() {
   const [filters, setFilters] = useState<BrowseFilters>(EMPTY);
   const [page, setPage] = useState(1);
-  const [view, setView] = useState<number | null>(null);
+  const viewer = useViewer();
   const facets = useQuery({ queryKey: ["facets"], queryFn: () => api<Facets>("/api/facets") });
   const items = useQuery({
     queryKey: ["items", filters, page],
@@ -119,8 +119,12 @@ export default function Browse() {
         <div className="card empty">No files match these filters.</div>
       ) : (
         <div className="grid">
-          {items.data?.items.map((it) => (
-            <div key={it.id} className="tile" onClick={() => setView(it.id)}>
+          {items.data?.items.map((it, idx) => (
+            <div
+              key={it.id}
+              className="tile"
+              onClick={() => viewer.open(items.data!.items.map((x) => ({ item: x.id, file: x.primary.id })), idx)}
+            >
               <div style={{ position: "relative" }}>
                 <Thumb file={it.primary} size="100%" live={it.is_live_photo} dim={it.primary.status !== "active"} />
                 <div style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 4 }}>
@@ -142,7 +146,6 @@ export default function Browse() {
           <button className="btn sm" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next ›</button>
         </div>
       )}
-      {view && <ItemModal itemId={view} onClose={() => setView(null)} />}
     </>
   );
 }
