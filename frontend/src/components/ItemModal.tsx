@@ -16,7 +16,7 @@ export default function ItemModal({ itemId, onClose }: { itemId: number; onClose
         <Loading />
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.6fr) minmax(280px, 1fr)", gap: 20 }}>
-          <div style={{ background: "#0c0d10", borderRadius: 8, height: "62vh", display: "grid", placeItems: "center", overflow: "hidden" }}>
+          <div className="modal-viewer">
             {f.kind === "video" ? <VideoPlayer file={f} /> : <StillView file={f} />}
           </div>
           <div className="stack">

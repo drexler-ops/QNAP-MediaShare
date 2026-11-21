@@ -35,7 +35,10 @@ export default function MapPage() {
     L.tileLayer(cfg.map_tile_url, { maxZoom: 19, attribution: cfg.map_attribution }).addTo(m);
     m.on("popupopen", (e) => {
       e.popup.getElement()?.querySelectorAll<HTMLElement>("[data-item]").forEach((node) =>
-        node.addEventListener("click", () => setView(Number(node.dataset.item))),
+        node.addEventListener("click", () => {
+          m.closePopup();
+          setView(Number(node.dataset.item));
+        }),
       );
     });
     map.current = m;
