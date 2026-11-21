@@ -18,7 +18,7 @@ Throughout, replace the placeholders with your own values:
 |---|---|---|
 | **NAS** | The whole app: database, web server, background worker (Docker) | Permanently |
 | **Helper PC** (optional) | One extra *worker* container that speeds up the first big indexing run | Temporarily, then uninstall |
-| Everyone's PC / Mac | Just a web browser: `http://<nas>:8080` | — |
+| Everyone's PC / Mac | Just a web browser: `http://<nas>:8090` | — |
 
 Steps run in this order: **A (NAS)**, then optionally **B (helper PC)**, then **C (finish)**. For a small library (under ~20k files), skip B; the NAS indexes everything by itself, just more slowly.
 
@@ -61,7 +61,7 @@ Steps run in this order: **A (NAS)**, then optionally **B (helper PC)**, then **
    ```
    The last command prints the **admin username and password**. Note them down.
    > If `docker` isn't found, sign out of SSH and back in after Container Station finishes installing. On some QTS versions the binary is at `/share/CACHEDEV1_DATA/.qpkg/container-station/bin/docker`.
-9. **Sign in as admin and create the users.** Open **http://<nas>:8080** and sign in as the admin.
+9. **Sign in as admin and create the users.** Open **http://<nas>:8090** and sign in as the admin.
    - Under **Settings → Users → Add a user**, add each person. Their *Folder* is the name of their top-level folder in `<media-share>`, which makes them the owner of the files in it. Tick *Admin* for anyone else who should be able to manage users.
    - Change the admin password under **Settings → My account**.
    - Tell everyone to open the site, type their name and **leave the password empty**. They'll be asked to choose their own password.
@@ -69,6 +69,32 @@ Steps run in this order: **A (NAS)**, then optionally **B (helper PC)**, then **
 10. **Using the helper PC?** Pause scheduled scans so the NAS doesn't start the big first scan by itself: in **Settings → Scanning**, tick *Pause scheduled scans* and click **Save settings**. Without a helper PC, skip this step; the first scan starts within a minute.
 
 > **The quarantine folder.** When an owner approves a deletion, the file moves to `\\<nas>\<media-share>\.quarantine\<date>\…` (the name is set by `QUARANTINE_DIRNAME`). Windows shows this folder; please don't edit it by hand. Use the app's **Quarantine** page to restore or purge files.
+
+### Alternative to steps A6–A8: deploy from another computer over SSH
+
+If you'd rather not copy files to the NAS or work in an SSH shell, any computer with Docker and this repository can build and start the stack on the NAS remotely. Do steps A1–A5 first.
+
+1. **Key-based SSH** (Docker's SSH connection can't prompt for a password). On your computer:
+   ```powershell
+   ssh-keygen -t ed25519            # press Enter to accept the defaults
+   type $env:USERPROFILE\.ssh\id_ed25519.pub
+   ```
+   Copy the printed line. Then sign in once with your password and add it to the NAS:
+   ```powershell
+   ssh <nas-admin>@<nas>
+   mkdir -p ~/.ssh && echo "<paste the line here>" >> ~/.ssh/authorized_keys && chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
+   exit
+   ssh <nas-admin>@<nas> "docker version --format '{{.Server.Version}}'"   # must print a version with no password prompt
+   ```
+   > On QNAP, the admin's home folder may be reset when the NAS reboots. If key login stops working after a reboot, repeat this step, or enable home folders under **Control Panel → Users → Advanced Settings**.
+2. **Configuration file:** create `.env.live` next to `docker-compose.yml` on your computer (copy `.env.example`). The paths in it are **paths on the NAS** (e.g. `/share/Multimedia`). It is gitignored; keep it safe, because it holds the secrets.
+3. **Deploy** (this is also the update command after a `git pull`):
+   ```powershell
+   docker context create nas --docker "host=ssh://<nas-admin>@<nas>"
+   docker --context nas compose --env-file .env.live up -d --build
+   docker --context nas compose --env-file .env.live logs api | Select-String -Context 0,6 "admin account"
+   ```
+   The project files are sent to the NAS and built there. Continue with step A9.
 
 ---
 
@@ -169,7 +195,8 @@ You can regenerate thumbnails at any time, so they don't need a backup.
 
 | Symptom | Fix |
 |---|---|
-| Page won't load at `:8080` | `docker compose ps` on the NAS, then `docker compose logs api` |
+| Page won't load at `:8090` | `docker compose ps` on the NAS, then `docker compose logs api` |
+| `port is already allocated` on start | Another service uses `APP_PORT` (QNAP's admin page uses 8080). Pick a free port in `.env` |
 | Nothing appears after a scan | **Settings → System status**: look at the job list and *Files that failed to process* (**Retry all**) |
 | PC worker: `mount error(13): Permission denied` | Wrong `SMB_USER`/`SMB_PASSWORD`, or the account lacks rights on the shares. Fix it, then `down -v` and `up` again |
 | PC worker: `mount error(2)` / `No such file or directory` | `SMB_LIBRARY_SHARE` or `SMB_THUMBS_PATH` doesn't match the share/folder names on the NAS |

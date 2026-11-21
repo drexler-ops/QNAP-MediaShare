@@ -53,7 +53,7 @@ services:
       - ${LIBRARY_PATH:?set LIBRARY_PATH in .env}:/library
       - ${THUMBS_PATH:?set THUMBS_PATH in .env}:/thumbs
     ports:
-      - "${APP_PORT:-8080}:8080"
+      - "${APP_PORT:-8090}:8080"
     mem_limit: ${API_MEM_LIMIT:-768m}
 
   worker:

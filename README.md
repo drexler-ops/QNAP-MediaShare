@@ -30,7 +30,7 @@ Everything deployment-specific is an environment variable in `.env` (template: [
 | `ADMIN_USERNAME` | `admin` | Admin account created on first start (if no admin exists) |
 | `ADMIN_PASSWORD` | random, printed in log | Initial admin password |
 | `APP_NAME` | `Photo Audit` | Name in the browser tab, sidebar and sign-in page |
-| `APP_PORT` | `8080` | Web port on the host |
+| `APP_PORT` | `8090` | Web port on the host (8080 is avoided because QNAP's admin page uses it) |
 | `NAS_WORKER_CONCURRENCY` | `2` | Processing processes on the NAS |
 | `QUARANTINE_DIRNAME` | `.quarantine` | Folder inside the library for approved deletions (must start with `.` or `@`) |
 | `MAP_TILE_URL` | OpenStreetMap | Leaflet tile URL template; your own tile server for offline use; `off` hides the Map page |
@@ -46,7 +46,7 @@ Duplicate-detection thresholds, keeper weights, scan interval and purge policy a
 ## Architecture
 
 ```
-            browser ──► api (FastAPI + built React app, :8080) ──┐
+            browser ──► api (FastAPI + built React app, host :8090) ──┐
                                                                  ├─► PostgreSQL (jobs, files, groups, decisions, audit)
  NAS worker (scheduler + 2 procs) ─┐                             │
  PC worker (temporary, N procs)  ──┴─ claim jobs (SKIP LOCKED) ──┘
