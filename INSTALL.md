@@ -176,6 +176,36 @@ This PC runs a second worker to help with the first index of a large library. It
 
 ---
 
+## D. Remote access for app users (optional, Tailscale)
+
+This lets people with app accounts (e.g. family) use the full app from anywhere, privately. Nothing is opened on your router, and the NAS isn't exposed to the internet: only devices signed in to your Tailscale network can reach the app, and they can reach **only the app** (not QTS or file shares). The free Personal plan (non-commercial) currently allows 6 users with unlimited devices. More people can be added by *sharing* the NAS with their own free Tailscale accounts, which doesn't count toward the 6.
+
+**1. Create the Tailscale network (once, ~5 minutes)**
+1. Sign up at https://login.tailscale.com (Google, Microsoft, Apple or GitHub sign-in). Choose the **Personal** plan.
+2. **DNS** page (https://login.tailscale.com/admin/dns): make sure **MagicDNS** is on, then under **HTTPS Certificates** click **Enable HTTPS**. This gives the app a real certificate (no browser warnings).
+3. Optional: under **DNS → Tailnet name**, pick a friendlier name than the random one (it becomes part of the address).
+4. **Settings → Keys** (https://login.tailscale.com/admin/settings/keys): **Generate auth key**. Leave *Reusable* and *Ephemeral* off, then copy the key (`tskey-auth-…`). Treat it like a password.
+
+**2. Connect the NAS**
+In the NAS `.env` (`<app-dir>/.env`), set:
+```ini
+COMPOSE_PROFILES=remote
+TS_AUTHKEY=tskey-auth-...
+TS_HOSTNAME=photo-audit           # becomes https://photo-audit.<tailnet>.ts.net
+```
+Then start it: `cd <app-dir> && ./qnap-compose.sh up -d` (or over SSH: `ssh <nas-admin>@<nas> <app-dir>/qnap-compose.sh up -d`).
+- In the Tailscale admin **Machines** page, the new machine appears. Open its **⋯** menu → **Disable key expiry**, so it never drops off.
+- You can now remove `TS_AUTHKEY` from `.env`. The connection is remembered in a Docker volume.
+- The app's address is shown on the Machines page: `https://<TS_HOSTNAME>.<tailnet>.ts.net`. The first visit can take ~30 seconds while the certificate is issued.
+
+**3. Onboard each person**
+1. In the Tailscale admin, either **Users → Invite users** (up to the plan limit; for immediate family), or **Machines → (the NAS) ⋯ → Share** (for anyone else; they use their own free account and can only reach this one machine).
+2. They accept the email invite, install Tailscale on each device (https://tailscale.com/download: iPhone/iPad and Mac from the App Store, Android from Play Store, Windows installer), sign in with the same account, and switch it on.
+3. They open `https://<TS_HOSTNAME>.<tailnet>.ts.net` and sign in to the app with their app account. An admin creates that under **Settings → Users**; first sign-in = name + empty password, then they choose one.
+4. Tip: they can bookmark it or "Add to Home Screen" on a phone. Tailscale only routes traffic for your tailnet, so the rest of their internet use is unaffected.
+
+**Remove someone:** delete or unshare them in the Tailscale admin (cuts network access), and **Deactivate** them in the app.
+
 ## Day-to-day
 
 - **Reviewing.** Use **Overview → Start reviewing**. Keyboard shortcuts: `1`–`9` select a copy, `K` keep, `D` delete, `Enter` save and go to the next group, `S` skip, `Z` zoom, `?` show help.

@@ -73,5 +73,27 @@ services:
       - ${THUMBS_PATH}:/thumbs
     mem_limit: ${WORKER_MEM_LIMIT:-2g}
 
+  # Optional private remote access for app users (family) via Tailscale. Enable with
+  # COMPOSE_PROFILES=remote and TS_AUTHKEY in .env. Exposes ONLY this app (HTTPS, inside your
+  # tailnet): no router ports, and tailnet devices can't reach QTS, file shares or anything else.
+  tailscale:
+    image: tailscale/tailscale:v1.78.1
+    profiles: ["remote"]
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-photo-audit}
+    depends_on:
+      api: { condition: service_started }
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-photo-audit}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tsstate:/var/lib/tailscale
+      - ./deploy/tailscale/serve-app.json:/config/serve.json:ro
+    mem_limit: 256m
+
 volumes:
   pgdata:
+  tsstate:
