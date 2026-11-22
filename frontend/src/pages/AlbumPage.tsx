@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, post, type AlbumDetail, type Me, type ShareLinkInfo, type UserRow } from "../api";
 import { useViewer } from "../components/MediaViewer";
-import { Confirm, Loading, Modal, Thumb, useAppConfig, useLongPress, useToast } from "../ui";
+import { Confirm, Loading, Modal, Thumb, useAppConfig, useTileSelection, useToast } from "../ui";
 import { cls, date } from "../util";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -21,20 +21,15 @@ export default function AlbumPage({ me }: { me: Me }) {
   const isOwner = a?.role === "owner";
 
   const [order, setOrder] = useState<number[]>([]);
-  const [selecting, setSelecting] = useState(false);
-  const [selected, setSelected] = useState<Set<number>>(new Set());
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState("");
   const [desc, setDesc] = useState("");
   const [sharing, setSharing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const longPress = useLongPress((idx) => {
-    if (!(a?.role === "owner" || a?.role === "editor")) return;
-    setSelecting(true);
-    const iid = order[idx];
-    setSelected((cur) => new Set(cur).add(iid));
-  });
+  // Plain mouse-dragging reorders tiles, so mouse drag-selection only works in select mode.
+  const sel = useTileSelection(order, { enabled: canEdit, mouseDrag: "selecting" });
+  const { selecting, selected, setSelected } = sel;
 
   useEffect(() => {
     if (a) setOrder(a.items.map((i) => i.id));
@@ -77,13 +72,6 @@ export default function AlbumPage({ me }: { me: Me }) {
   }
 
   const open = (idx: number) => viewer.open(items.map((i) => ({ item: i.id, file: i.primary.id })), idx);
-  const toggle = (iid: number) =>
-    setSelected((s) => {
-      const n = new Set(s);
-      if (n.has(iid)) n.delete(iid);
-      else n.add(iid);
-      return n;
-    });
   const drop = (to: number) => {
     if (dragFrom === null || dragFrom === to) return;
     const next = [...order];
@@ -124,7 +112,7 @@ export default function AlbumPage({ me }: { me: Me }) {
           <div className="row">
             {isOwner && <button className="btn" onClick={() => { setTitle(a.title); setDesc(a.description ?? ""); setEditing(true); }}>Rename</button>}
             {canEdit && a.count > 0 && (
-              <button className={cls("btn", selecting && "primary")} onClick={() => { setSelecting((v) => !v); setSelected(new Set()); }}>
+              <button className={cls("btn", selecting && "primary")} onClick={() => (selecting ? sel.stop() : sel.start())}>
                 {selecting ? "Done" : "Select"}
               </button>
             )}
@@ -158,16 +146,14 @@ export default function AlbumPage({ me }: { me: Me }) {
               <div
                 key={it.id}
                 className={cls("tile", selecting && selected.has(it.id) && "selected", dragFrom === idx && "dragging")}
+                {...sel.tileProps(idx)}
                 draggable={canEdit && !selecting}
-                onDragStart={() => setDragFrom(idx)}
+                onDragStart={(e) => (selecting ? e.preventDefault() : setDragFrom(idx))}
                 onDragOver={(e) => canEdit && e.preventDefault()}
                 onDrop={() => drop(idx)}
                 onDragEnd={() => setDragFrom(null)}
-                {...longPress.bind(idx)}
-                onClick={() => {
-                  if (longPress.consumedClick()) return;
-                  if (selecting) toggle(it.id);
-                  else open(idx);
+                onClick={(e) => {
+                  if (!sel.click(idx, e)) open(idx);
                 }}
               >
                 <div style={{ position: "relative" }}>

@@ -30,40 +30,214 @@ export function Brand({ compact }: { compact?: boolean }) {
 
 /* ---------------- long-press (touch: hold a tile to start selecting) ---------------- */
 
-export function useLongPress(onLong: (index: number) => void, ms = 450) {
+export function useMediaQuery(query: string): boolean {
+  const get = () => typeof window !== "undefined" && !!window.matchMedia?.(query).matches;
+  const [match, setMatch] = useState(get);
+  useEffect(() => {
+    const mq = window.matchMedia?.(query);
+    if (!mq) return;
+    const on = () => setMatch(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [query]);
+  return match;
+}
+
+/**
+ * Multi-select for a grid of tiles.
+ *
+ * - Tap/click a tile while selecting to toggle it; Shift-click selects a range.
+ * - Touch: long-press a tile to start selecting; keep the finger down and drag to select a range.
+ * - Mouse: press on a tile and drag across others to select a range (`mouseDrag: "always"` also
+ *   starts select mode; `"selecting"` only works once select mode is on, e.g. where plain dragging
+ *   reorders tiles). Dragging from an already-selected tile deselects instead.
+ * - Near the top/bottom edge while dragging, the page scrolls.
+ * - Deselecting the last tile leaves select mode.
+ *
+ * Spread `tileProps(index)` on each tile and call `click(index, event)` first in its onClick:
+ * it returns true when the click was handled as a selection.
+ */
+export function useTileSelection<K>(keys: K[], opts: { enabled?: boolean; mouseDrag?: "always" | "selecting" } = {}) {
+  const enabled = opts.enabled ?? true;
+  const mouseDrag = opts.mouseDrag ?? "always";
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<K>>(new Set());
+  const st = useRef({ keys, selected, selecting, enabled, mouseDrag });
+  st.current = { keys, selected, selecting, enabled, mouseDrag };
+  const anchor = useRef<number | null>(null);
+  const consumed = useRef(false);
   const timer = useRef<number | undefined>(undefined);
-  const start = useRef<{ x: number; y: number } | null>(null);
-  const fired = useRef(false);
-  const cancel = () => {
-    window.clearTimeout(timer.current);
-    start.current = null;
+  const press = useRef<{ idx: number; x: number; y: number; type: string; id: number } | null>(null);
+  const drag = useRef<{ from: number; to: number; add: boolean; base: Set<K>; result: Set<K>; x: number; y: number; scroller: HTMLElement } | null>(null);
+  const raf = useRef<number | undefined>(undefined);
+
+  const stop = useCallback(() => {
+    setSelecting(false);
+    setSelected(new Set());
+    anchor.current = null;
+  }, []);
+  const start = useCallback(() => setSelecting(true), []);
+
+  const paint = () => {
+    const d = drag.current;
+    if (!d) return;
+    const n = new Set(d.base);
+    const ks = st.current.keys;
+    for (let i = Math.min(d.from, d.to); i <= Math.max(d.from, d.to); i++) {
+      if (i >= ks.length) break;
+      if (d.add) n.add(ks[i]);
+      else n.delete(ks[i]);
+    }
+    d.result = n;
+    setSelected(n);
   };
-  const bind = (index: number) => ({
-    onPointerDown: (e: React.PointerEvent) => {
-      if (e.pointerType === "mouse") return;
-      fired.current = false;
-      start.current = { x: e.clientX, y: e.clientY };
+  const tileAt = (x: number, y: number): number | null => {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-sel-idx]");
+    return el ? Number(el.dataset.selIdx) : null;
+  };
+  const scrollParent = (el: Element | null): HTMLElement => {
+    for (let n = el?.parentElement; n; n = n.parentElement) {
+      const oy = getComputedStyle(n).overflowY;
+      if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight) return n;
+    }
+    return (document.scrollingElement as HTMLElement) ?? document.documentElement;
+  };
+  const autoScroll = () => {
+    const d = drag.current;
+    if (!d) return;
+    const edge = 70;
+    const r = d.scroller === document.scrollingElement ? { top: 0, bottom: window.innerHeight } : d.scroller.getBoundingClientRect();
+    const v = d.y < r.top + edge ? -(r.top + edge - d.y) : d.y > r.bottom - edge ? d.y - (r.bottom - edge) : 0;
+    if (v) {
+      d.scroller.scrollTop += Math.max(-24, Math.min(24, v / 3));
+      const i = tileAt(d.x, d.y);
+      if (i !== null && i !== d.to) {
+        d.to = i;
+        paint();
+      }
+    }
+    raf.current = requestAnimationFrame(autoScroll);
+  };
+  const beginDrag = (idx: number, x: number, y: number, target: Element) => {
+    const { keys: ks, selected: sel, selecting: on } = st.current;
+    const add = !(on && sel.has(ks[idx]));
+    drag.current = { from: idx, to: idx, add, base: on ? new Set(sel) : new Set(), result: new Set(), x, y, scroller: scrollParent(target) };
+    setSelecting(true);
+    anchor.current = idx;
+    consumed.current = true;
+    paint();
+    cancelAnimationFrame(raf.current!);
+    raf.current = requestAnimationFrame(autoScroll);
+  };
+
+  // Window-level listeners: the finger/mouse leaves the starting tile while dragging.
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const p = press.current;
+      const d = drag.current;
+      if (d) {
+        d.x = e.clientX;
+        d.y = e.clientY;
+        const i = tileAt(e.clientX, e.clientY);
+        if (i !== null && i !== d.to) {
+          d.to = i;
+          paint();
+        }
+        return;
+      }
+      if (!p || p.id !== e.pointerId) return;
+      const moved = Math.hypot(e.clientX - p.x, e.clientY - p.y);
+      if (p.type === "mouse") {
+        if (moved > 6) {
+          const target = document.elementFromPoint(p.x, p.y);
+          press.current = null;
+          if (target) beginDrag(p.idx, e.clientX, e.clientY, target);
+        }
+      } else if (moved > 10) {
+        // Finger moved before the long-press fired: it's a scroll.
+        window.clearTimeout(timer.current);
+        press.current = null;
+      }
+    };
+    const end = () => {
       window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => {
-        fired.current = true;
-        navigator.vibrate?.(15);
-        onLong(index);
-      }, ms);
-    },
-    onPointerMove: (e: React.PointerEvent) => {
-      if (start.current && Math.hypot(e.clientX - start.current.x, e.clientY - start.current.y) > 10) cancel();
-    },
-    onPointerUp: cancel,
-    onPointerCancel: cancel,
-    onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
-  });
-  /** Call at the start of onClick: true means this click ended a long-press and should be ignored. */
-  const consumedClick = () => {
-    if (!fired.current) return false;
-    fired.current = false;
+      press.current = null;
+      const d = drag.current;
+      if (!d) return;
+      drag.current = null;
+      cancelAnimationFrame(raf.current!);
+      if (!d.add && d.result.size === 0) stop();
+    };
+    // While drag-selecting with a finger, stop the page from scrolling instead.
+    const touchMove = (e: TouchEvent) => {
+      if (drag.current && e.cancelable) e.preventDefault();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("touchmove", touchMove, { passive: false });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("touchmove", touchMove);
+      cancelAnimationFrame(raf.current!);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const lastType = useRef("mouse");
+
+  const tileProps = (idx: number) => {
+    const mouseOk = enabled && (mouseDrag === "always" || selecting);
+    return {
+      "data-sel-idx": idx,
+      onPointerDown: (e: React.PointerEvent) => {
+        consumed.current = false;
+        lastType.current = e.pointerType;
+        if (!st.current.enabled) return;
+        if (e.pointerType === "mouse") {
+          if (e.button !== 0 || e.shiftKey || !mouseOk) return;
+          press.current = { idx, x: e.clientX, y: e.clientY, type: "mouse", id: e.pointerId };
+          return;
+        }
+        press.current = { idx, x: e.clientX, y: e.clientY, type: e.pointerType, id: e.pointerId };
+        window.clearTimeout(timer.current);
+        const target = e.currentTarget as Element;
+        timer.current = window.setTimeout(() => {
+          if (!press.current || press.current.idx !== idx) return;
+          press.current = null;
+          navigator.vibrate?.(15);
+          beginDrag(idx, e.clientX, e.clientY, target);
+        }, 450);
+      },
+      onContextMenu: (e: React.MouseEvent) => {
+        if (lastType.current !== "mouse") e.preventDefault(); // no long-press menu on touch
+      },
+      onDragStart: mouseOk ? (e: React.DragEvent) => e.preventDefault() : undefined,
+    };
+  };
+
+  /** Call first in a tile's onClick. True = handled as selection (don't open the item). */
+  const click = (idx: number, e: React.MouseEvent): boolean => {
+    if (consumed.current) {
+      consumed.current = false;
+      return true;
+    }
+    if (!st.current.selecting) return false;
+    const ks = st.current.keys;
+    const n = new Set(st.current.selected);
+    if (e.shiftKey && anchor.current !== null) {
+      for (let i = Math.min(anchor.current, idx); i <= Math.max(anchor.current, idx); i++) n.add(ks[i]);
+    } else if (n.has(ks[idx])) n.delete(ks[idx]);
+    else n.add(ks[idx]);
+    anchor.current = idx;
+    if (n.size === 0) stop();
+    else setSelected(n);
     return true;
   };
-  return { bind, consumedClick };
+
+  return { selecting, selected, setSelected, start, stop, tileProps, click };
 }
 
 /* ---------------- toasts ---------------- */

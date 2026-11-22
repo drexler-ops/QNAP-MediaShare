@@ -6,15 +6,15 @@
  * converted server-side). Videos play through the browser-safe preview. Nothing is downloaded unless
  * the user explicitly presses Download.
  *
- * Touch: double-tap to zoom, drag to pan when zoomed, swipe left/right for next/previous, swipe down
- * to close. Faces: toggle with the Faces button (P); tap a face to name it or correct it.
+ * Touch: double-tap or pinch to zoom, drag to pan when zoomed, swipe left/right for next/previous, swipe down
+ * to close, single tap to hide/show the controls, swipe up from the bottom to show the filmstrip. Faces: toggle with the Faces button (P); tap a face to name it or correct it.
  */
 import { createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, post, type FileInfo, type ItemFace, type ItemInfo } from "../api";
 import { internalUrls, MediaUrlsContext, useMediaUrls, type MediaUrls } from "../media-urls";
-import { Spinner, useToast } from "../ui";
+import { Spinner, useMediaQuery, useToast } from "../ui";
 import { bytes, camera, cls, date, dims, duration, STATUS_LABEL } from "../util";
 import AlbumPicker from "./AlbumPicker";
 import { VideoPlayer } from "./MediaView";
@@ -116,10 +116,20 @@ function MediaViewer({
   const [tagging, setTagging] = useState<ItemFace | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
+  // Touch screens: controls float over the photo (tap to hide/show); the filmstrip is opt-in.
+  const touch = useMediaQuery("(pointer: coarse)");
+  const [stripPref, setStripPref] = useState(() => readPref("viewer.strip", false));
+  const [chrome, setChrome] = useState(true);
+  const setStrip = useCallback((v: boolean) => {
+    setStripPref(v);
+    writePref("viewer.strip", v);
+  }, []);
+  const canFullscreen = typeof document !== "undefined" && !!document.fullscreenEnabled;
   const zoom = useRef<ZoomApi | null>(null);
   const root = useRef<HTMLDivElement>(null);
-  const swipe = useRef<{ x: number; y: number; id: number; t: number } | null>(null);
+  const swipe = useRef<{ x: number; y: number; id: number; t: number; bottom: boolean } | null>(null);
   const many = entries.length > 1;
+  const stripOn = many && (!touch || stripPref);
   const download = f && f.status !== "purged" ? urls.download(f.id) : null;
   const facesQ = useQuery({
     queryKey: ["item-faces", entry.item],
@@ -224,7 +234,10 @@ function MediaViewer({
       return;
     }
     if (zoomed || tagging) return;
-    swipe.current = { x: e.clientX, y: e.clientY, id: e.pointerId, t: Date.now() };
+    // Gestures that start near the bottom edge control the filmstrip instead of closing.
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const bottom = touch && many && e.clientY > r.bottom - Math.max(110, r.height * 0.22);
+    swipe.current = { x: e.clientX, y: e.clientY, id: e.pointerId, t: Date.now(), bottom };
   };
   const releaseFinger = (e: React.PointerEvent) => {
     fingers.current.delete(e.pointerId);
@@ -235,7 +248,8 @@ function MediaViewer({
     if (!s || s.id !== e.pointerId || multiTouch.current) return;
     const dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
-    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) setDrag({ dx: Math.abs(dx) > Math.abs(dy) ? dx : 0, dy: dy > 0 && dy > Math.abs(dx) ? dy : 0 });
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8)
+      setDrag({ dx: Math.abs(dx) > Math.abs(dy) ? dx : 0, dy: !s.bottom && dy > 0 && dy > Math.abs(dx) ? dy : 0 });
   };
   const onStageUp = (e: React.PointerEvent) => {
     const wasMulti = multiTouch.current;
@@ -247,14 +261,58 @@ function MediaViewer({
     const dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
     const fast = Date.now() - s.t < 600;
+    const vertical = Math.abs(dy) > Math.abs(dx) * 1.3;
     if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.3 && fast) go(dx < 0 ? 1 : -1);
-    else if (dy > 90 && dy > Math.abs(dx) * 1.3) onClose();
+    else if (s.bottom && vertical && dy < -40) {
+      setStrip(true);
+      setChrome(true);
+    } else if (s.bottom && vertical && dy > 40) setStrip(false);
+    else if (!s.bottom && dy > 90 && vertical) onClose();
+  };
+
+  const tapFingers = useRef<Set<number>>(new Set());
+  const tap = useRef<{ x: number; y: number; t: number; id: number } | null>(null);
+  const tapTimer = useRef<number | undefined>(undefined);
+  const tapPending = useRef(false);
+  useEffect(() => () => window.clearTimeout(tapTimer.current), []);
+  const onTapDown = (e: React.PointerEvent) => {
+    if (e.pointerType !== "touch") return;
+    tapFingers.current.add(e.pointerId);
+    if (tapPending.current) {
+      // Second tap of a double-tap: that's a zoom, not a toggle.
+      window.clearTimeout(tapTimer.current);
+      tapPending.current = false;
+      tap.current = null;
+      return;
+    }
+    tap.current = tapFingers.current.size === 1 ? { x: e.clientX, y: e.clientY, t: Date.now(), id: e.pointerId } : null;
+  };
+  const onTapUp = (e: React.PointerEvent) => {
+    if (e.pointerType !== "touch") return;
+    tapFingers.current.delete(e.pointerId);
+    const t = tap.current;
+    tap.current = null;
+    if (!t || t.id !== e.pointerId || tapFingers.current.size) return;
+    if (Date.now() - t.t > 300 || Math.hypot(e.clientX - t.x, e.clientY - t.y) > 10) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (el?.closest("button, a, input, video, .face-tagger, .zoom-hud")) return;
+    tapPending.current = true;
+    tapTimer.current = window.setTimeout(() => {
+      tapPending.current = false;
+      setChrome((c) => !c);
+    }, 300);
   };
 
   const faces = showFaces && f?.kind === "image" && !live ? facesQ.data ?? [] : [];
 
   return (
-    <div className={cls("viewer-overlay", showInfo && "with-info")} ref={root} role="dialog" aria-modal="true" aria-label="Media viewer">
+    <div
+      className={cls("viewer-overlay", showInfo && "with-info", touch && "touch", touch && !chrome && "chrome-off", stripOn && "strip-on")}
+      ref={root}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Media viewer"
+    >
       <header className="viewer-bar">
         <div className="viewer-title">
           <strong title={f?.path}>{f?.name ?? "Loading…"}</strong>
@@ -290,9 +348,11 @@ function MediaViewer({
           <button className={cls("vbtn", showInfo && "on")} onClick={toggleInfo} title="Details (I)">
             ⓘ <span className="vlabel">Info</span>
           </button>
-          <button className="vbtn hide-touch" onClick={toggleFullscreen} title="Full screen (F)">
-            ⛶
-          </button>
+          {(!touch || canFullscreen) && (
+            <button className="vbtn" onClick={toggleFullscreen} title="Full screen (F)" aria-label="Full screen">
+              ⛶
+            </button>
+          )}
           {download && (
             <a className="vbtn" href={download} title="Download the original file to this computer">
               ⤓ <span className="vlabel">Download</span>
@@ -306,6 +366,12 @@ function MediaViewer({
 
       <div
         className="viewer-stage"
+        onPointerDownCapture={onTapDown}
+        onPointerUpCapture={onTapUp}
+        onPointerCancelCapture={(e) => {
+          tapFingers.current.delete(e.pointerId);
+          tap.current = null;
+        }}
         onPointerDown={onStageDown}
         onPointerMove={onStageMove}
         onPointerUp={onStageUp}
@@ -336,12 +402,12 @@ function MediaViewer({
           />
         )}
         {many && index > 0 && (
-          <button className="viewer-nav prev" onClick={() => go(-1)} aria-label="Previous (←)">
+          <button className="viewer-nav prev hide-touch" onClick={() => go(-1)} aria-label="Previous (←)">
             ‹
           </button>
         )}
         {many && index < entries.length - 1 && (
-          <button className="viewer-nav next" onClick={() => go(1)} aria-label="Next (→)">
+          <button className="viewer-nav next hide-touch" onClick={() => go(1)} aria-label="Next (→)">
             ›
           </button>
         )}
@@ -350,7 +416,12 @@ function MediaViewer({
 
       {showInfo && <InfoPanel it={it} faces={facesQ.data} onClose={onClose} publicMode={publicMode} />}
 
-      {many && <Filmstrip entries={entries} index={index} onIndex={onIndex} />}
+      {stripOn && <Filmstrip entries={entries} index={index} onIndex={onIndex} onHide={touch ? () => setStrip(false) : undefined} />}
+      {touch && many && !stripOn && f?.kind !== "video" && (
+        <button className="strip-handle" onClick={() => setStrip(true)} aria-label="Show filmstrip (or swipe up from the bottom)">
+          <span />
+        </button>
+      )}
       {picker && it && <AlbumPicker itemIds={[it.id]} onClose={() => setPicker(false)} z={3500} />}
     </div>
   );
@@ -393,6 +464,8 @@ function ZoomImage({
   const touchToggled = useRef(0); // browsers may also fire dblclick after a double-tap
   const touches = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinch = useRef<{ d0: number; mx0: number; my0: number; s0: number; x0: number; y0: number } | null>(null);
+  const [showPct, setShowPct] = useState(false);
+  const firstScale = useRef(true);
 
   useEffect(() => {
     let alive = true;
@@ -411,6 +484,16 @@ function ZoomImage({
   }, [file.id, urls]);
 
   useEffect(() => onZoomChange(view.s > 1), [view.s, onZoomChange]);
+  // The zoom level only shows while it's changing.
+  useEffect(() => {
+    if (firstScale.current) {
+      firstScale.current = false;
+      return;
+    }
+    setShowPct(true);
+    const t = window.setTimeout(() => setShowPct(false), 900);
+    return () => window.clearTimeout(t);
+  }, [view.s]);
 
   useLayoutEffect(() => {
     const el = box.current;
@@ -583,16 +666,25 @@ function ZoomImage({
       ) : (
         <Spinner />
       )}
-      <div className="zoom-hud" onDoubleClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
-        <button className="vbtn" onClick={() => zoomAt(1 / 1.5)} aria-label="Zoom out (−)">−</button>
-        <button className="vbtn zoom-pct" onClick={() => setView({ s: 1, x: 0, y: 0 })} title="Fit to screen (0)">
-          {Math.round(view.s * 100)}%
-        </button>
-        <button className="vbtn" onClick={() => zoomAt(1.5)} aria-label="Zoom in (+)">+</button>
-        <span className="zoom-q" title={quality === "full" ? "Full resolution" : quality === "failed" ? "Full resolution unavailable" : "Loading full resolution…"}>
-          {quality === "full" ? "Full res" : quality === "failed" ? "Preview" : <><Spinner /> Loading full res</>}
-        </span>
+      <div className={cls("zoom-pct", showPct && "on")} aria-live="polite">
+        {Math.round(view.s * 100)}%
+        {view.s > 1 && quality === "preview" && <span className="zoom-q"><Spinner /> loading full res</span>}
+        {view.s > 1 && quality === "failed" && <span className="zoom-q">preview only</span>}
       </div>
+      {view.s > 1 && (
+        <button
+          className="zoom-reset"
+          onClick={() => setView({ s: 1, x: 0, y: 0 })}
+          onPointerDown={(e) => e.stopPropagation()}
+          onDoubleClick={(e) => e.stopPropagation()}
+          title="Reset zoom (0)"
+          aria-label="Reset zoom"
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
@@ -772,9 +864,20 @@ function ItemAlbums({ itemId, onClose }: { itemId: number; onClose: () => void }
   );
 }
 
-function Filmstrip({ entries, index, onIndex }: { entries: ViewerEntry[]; index: number; onIndex: (i: number) => void }) {
+function Filmstrip({
+  entries,
+  index,
+  onIndex,
+  onHide,
+}: {
+  entries: ViewerEntry[];
+  index: number;
+  onIndex: (i: number) => void;
+  onHide?: () => void;
+}) {
   const urls = useMediaUrls();
   const strip = useRef<HTMLDivElement>(null);
+  const start = useRef<{ x: number; y: number } | null>(null);
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>(".on")?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
   }, [index]);
@@ -782,7 +885,22 @@ function Filmstrip({ entries, index, onIndex }: { entries: ViewerEntry[]; index:
   const from = Math.max(0, index - 40);
   const to = Math.min(entries.length, index + 41);
   return (
-    <div className="viewer-strip" ref={strip}>
+    <div
+      className="viewer-strip"
+      ref={strip}
+      onPointerDown={(e) => {
+        if (onHide && e.pointerType === "touch") start.current = { x: e.clientX, y: e.clientY };
+      }}
+      onPointerUp={(e) => {
+        const s0 = start.current;
+        start.current = null;
+        if (!s0 || !onHide) return;
+        const dx = e.clientX - s0.x;
+        const dy = e.clientY - s0.y;
+        if (dy > 30 && dy > Math.abs(dx) * 1.3) onHide(); // swipe down on the strip hides it
+      }}
+      onPointerCancel={() => (start.current = null)}
+    >
       {entries.slice(from, to).map((e, k) => {
         const i = from + k;
         return (

@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api, qs, type Facets, type ItemInfo } from "../api";
 import { useViewer } from "../components/MediaViewer";
 import AlbumPicker from "../components/AlbumPicker";
-import { Loading, Thumb, useLongPress } from "../ui";
+import { Loading, Thumb, useTileSelection } from "../ui";
 import { date } from "../util";
 
 export interface BrowseFilters {
@@ -124,10 +124,6 @@ export default function Browse() {
   const [filters, setFilters] = useState<BrowseFilters>(EMPTY);
   const [page, setPage] = useState(1);
   const viewer = useViewer();
-  const [selecting, setSelecting] = useState(false);
-  // Selection survives paging, so you can collect photos across several pages.
-  const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [anchor, setAnchor] = useState<number | null>(null);
   const [picking, setPicking] = useState(false);
   const facets = useQuery({ queryKey: ["facets"], queryFn: () => api<Facets>("/api/facets") });
   const items = useQuery({
@@ -138,33 +134,12 @@ export default function Browse() {
   const pages = items.data ? Math.max(1, Math.ceil(items.data.total / items.data.page_size)) : 1;
   const list = items.data?.items ?? [];
 
+  // Selection survives paging, so you can collect photos across several pages.
+  const sel = useTileSelection(list.map((x) => x.id));
+  const { selecting, selected, setSelected, stop: stopSelecting } = sel;
   const clickTile = (idx: number, e: React.MouseEvent) => {
-    if (!selecting) {
-      viewer.open(list.map((x) => ({ item: x.id, file: x.primary.id })), idx);
-      return;
-    }
-    const id = list[idx].id;
-    setSelected((cur) => {
-      const n = new Set(cur);
-      if (e.shiftKey && anchor !== null) {
-        const lo = Math.min(anchor, idx);
-        const hi = Math.max(anchor, idx);
-        for (let i = lo; i <= hi; i++) n.add(list[i].id);
-      } else if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
-    setAnchor(idx);
-  };
-  const longPress = useLongPress((idx) => {
-    setSelecting(true);
-    setSelected((cur) => new Set(cur).add(list[idx].id));
-    setAnchor(idx);
-  });
-  const stopSelecting = () => {
-    setSelecting(false);
-    setSelected(new Set());
-    setAnchor(null);
+    if (sel.click(idx, e)) return;
+    viewer.open(list.map((x) => ({ item: x.id, file: x.primary.id })), idx);
   };
 
   return (
@@ -174,7 +149,7 @@ export default function Browse() {
         <span className="muted">{items.data ? `${items.data.total.toLocaleString()} items` : ""}</span>
         <div className="spacer" />
         <Link to="/upload" className="btn">⬆ Upload</Link>
-        <button className={selecting ? "btn primary" : "btn"} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}>
+        <button className={selecting ? "btn primary" : "btn"} onClick={() => (selecting ? stopSelecting() : sel.start())}>
           {selecting ? "Done" : "Select"}
         </button>
       </div>
@@ -182,8 +157,8 @@ export default function Browse() {
       {selecting && (
         <div className="card pad row select-bar">
           <strong>{selected.size} selected</strong>
-          <span className="small faint hide-touch">Click to select · Shift-click for a range</span>
-          <span className="small faint show-touch-inline">Tap to select</span>
+          <span className="small faint hide-touch">Click to select · Shift-click or drag for a range</span>
+          <span className="small faint show-touch-inline">Tap to select · long-press and drag for a range</span>
           <button className="btn sm" onClick={() => setSelected((cur) => new Set([...cur, ...list.map((x) => x.id)]))}>Select page</button>
           <button className="btn sm" disabled={!selected.size} onClick={() => setSelected(new Set())}>Clear</button>
           <div className="grow" />
@@ -200,10 +175,8 @@ export default function Browse() {
             <div
               key={it.id}
               className={selecting && selected.has(it.id) ? "tile selected" : "tile"}
-              {...longPress.bind(idx)}
-              onClick={(e) => {
-                if (!longPress.consumedClick()) clickTile(idx, e);
-              }}
+              {...sel.tileProps(idx)}
+              onClick={(e) => clickTile(idx, e)}
             >
               <div style={{ position: "relative" }}>
                 <Thumb file={it.primary} size="100%" live={it.is_live_photo} dim={it.primary.status !== "active"} />

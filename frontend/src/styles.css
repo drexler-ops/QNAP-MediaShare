@@ -441,13 +441,22 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .show-touch { display: none; }
 @media (pointer: coarse) { .hide-touch { display: none !important; } .show-touch { display: block; } }
 @media (max-width: 700px) { .vlabel { display: none; } }
-.zoom-hud {
-  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 10px;
-  background: rgba(0, 0, 0, 0.62); backdrop-filter: blur(6px); cursor: default;
+/* Zoom level: only visible while it changes. Reset button: only while zoomed. */
+.zoom-pct {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2; pointer-events: none;
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(6px); color: #fff; font-weight: 650; font-variant-numeric: tabular-nums;
+  opacity: 0; transition: opacity 0.25s;
 }
-.zoom-pct { min-width: 60px; font-variant-numeric: tabular-nums; }
-.zoom-q { display: inline-flex; align-items: center; gap: 6px; color: #9aa3b2; font-size: 12px; padding: 0 6px; }
+.zoom-pct.on { opacity: 1; transition: opacity 0.08s; }
+.zoom-q { display: inline-flex; align-items: center; gap: 6px; color: #b9c0cc; font-size: 12px; font-weight: 500; }
+.zoom-reset {
+  position: absolute; right: 14px; bottom: 14px; z-index: 2;
+  width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border-radius: 50%;
+  border: 0; background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px); color: #fff; cursor: pointer;
+  transition: opacity 0.2s, bottom 0.2s;
+}
+.zoom-reset:hover { background: rgba(0, 0, 0, 0.75); }
 .zoom-q .spinner { width: 12px; height: 12px; }
 .viewer-nav {
   position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
@@ -469,7 +478,7 @@ table.tbl { width: 100%; border-collapse: collapse; }
 .strip-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .strip-thumb:hover { opacity: 1; }
 .strip-thumb.on { border-color: #7b91ff; opacity: 1; }
-@media (max-width: 860px) {
+@media (max-width: 860px) and (orientation: portrait) {
   .viewer-overlay.with-info {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr) auto minmax(0, 38vh);
@@ -646,3 +655,62 @@ a.person-card:hover { border-color: var(--accent); text-decoration: none; }
   .review-foot { padding-top: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
   .review-foot .btn:not(.lg) { flex: 1; }
 }
+
+/* Narrow landscape (phones turned sideways): details beside the photo, not under it. */
+@media (max-width: 960px) and (orientation: landscape) {
+  .viewer-overlay.with-info { grid-template-columns: minmax(0, 1fr) min(300px, 42vw); }
+}
+
+/* ---------- viewer on touch screens: full-bleed photo, controls float over it ---------- */
+.viewer-overlay.touch { grid-template-rows: minmax(0, 1fr); grid-template-areas: "stage"; }
+.viewer-overlay.touch.with-info { grid-template-areas: "stage info"; }
+@media (orientation: portrait) {
+  .viewer-overlay.touch.with-info {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 42vh);
+    grid-template-areas: "stage" "info";
+  }
+}
+.viewer-overlay.touch .viewer-bar {
+  grid-area: stage; align-self: start; z-index: 4; border: 0; gap: 8px;
+  padding: calc(8px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) 24px calc(10px + env(safe-area-inset-left));
+  background: linear-gradient(rgba(0, 0, 0, 0.45), transparent);
+  pointer-events: none; /* only the buttons take taps; the rest falls through to the photo */
+}
+.viewer-overlay.touch .viewer-bar > * { pointer-events: auto; }
+.viewer-overlay.touch .viewer-title { visibility: hidden; } /* name/date live in Info */
+.viewer-overlay.touch .viewer-count {
+  order: -1; font-size: 13px; color: #fff; padding: 4px 10px; border-radius: 999px; background: rgba(0, 0, 0, 0.4);
+}
+.viewer-overlay.touch .viewer-actions { flex-wrap: nowrap; }
+.viewer-overlay.touch .vbtn {
+  border: 0; border-radius: 50%; padding: 0; width: 40px; background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); font-size: 17px;
+}
+.viewer-overlay.touch .vbtn .vlabel { display: none; }
+.viewer-overlay.touch .vbtn.on { background: #7b91ff; color: #0d1020; }
+.viewer-overlay.touch .viewer-strip {
+  grid-area: stage; align-self: end; z-index: 4; border: 0; touch-action: pan-x;
+  padding: 10px calc(12px + env(safe-area-inset-right)) calc(10px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.6) 35%);
+}
+.viewer-overlay.touch.strip-on .zoom-reset { bottom: 96px; }
+.strip-handle {
+  grid-area: stage; align-self: end; justify-self: center; z-index: 4;
+  width: 64px; height: 26px; margin-bottom: env(safe-area-inset-bottom); padding: 0; border: 0; background: transparent; display: grid; place-items: center;
+}
+.strip-handle span { width: 40px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.55); box-shadow: 0 0 4px rgba(0, 0, 0, 0.5); }
+.viewer-overlay.touch .viewer-bar, .viewer-overlay.touch .viewer-strip, .strip-handle, .zoom-reset { transition: opacity 0.2s; }
+.viewer-overlay.chrome-off .viewer-bar,
+.viewer-overlay.chrome-off .viewer-strip,
+.viewer-overlay.chrome-off .strip-handle,
+.viewer-overlay.chrome-off .zoom-reset { opacity: 0; pointer-events: none !important; }
+.viewer-overlay.chrome-off .viewer-bar > * { pointer-events: none; }
+.viewer-overlay.touch .viewer-info { padding-bottom: calc(16px + env(safe-area-inset-bottom)); padding-right: calc(16px + env(safe-area-inset-right)); }
+
+/* drag-selection: no text selection while sweeping across tiles */
+.tile { -webkit-user-select: none; user-select: none; }
+
+/* viewport-fit=cover (so the viewer can use the whole landscape screen): keep the app clear of notches */
+.app { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); box-sizing: border-box; }
+@media (max-width: 1023px) { .sidebar { padding-left: max(10px, env(safe-area-inset-left)); } } /* drawer is fixed, outside .app padding */
