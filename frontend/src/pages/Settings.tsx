@@ -25,11 +25,11 @@ export default function SettingsPage({ me }: { me: Me }) {
           left; the wide panels (live resources, users table, job log) stack on the right. One column on
           smaller screens. */}
       <div className="settings-layout">
-        <div className="settings-col side">
+        <div className="settings-col settings-narrow">
           <Account me={me} />
           <Detection />
         </div>
-        <div className="settings-col main">
+        <div className="settings-col settings-wide">
           {me.is_admin && <NasResources />}
           {me.is_admin && <Users me={me} />}
           <SystemStatus />

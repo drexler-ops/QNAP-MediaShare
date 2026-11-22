@@ -242,7 +242,7 @@ label.check { display: inline-flex; gap: 8px; align-items: center; cursor: point
 
 table.tbl { width: 100%; border-collapse: collapse; }
 .tbl th, .tbl td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-.tbl th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); font-weight: 650; background: var(--surface); position: sticky; top: 0; }
+.tbl th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-3); font-weight: 650; background: var(--surface); position: sticky; top: 0; z-index: 2; }
 .tbl tr:hover td { background: var(--surface-2); }
 
 /* ---------- thumbs / grids ---------- */
