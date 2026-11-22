@@ -15,7 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .api import admin, albums, auth_routes, decisions, groups, items, media, people, public, uploads, users
 from .albums import AlbumError
-from .config import config
+from .config import apply_umask, config
 from .deletion.workflow import WorkflowError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -123,4 +123,5 @@ def create_app(share_only: bool | None = None) -> FastAPI:
     return app
 
 
+apply_umask()
 app = create_app()

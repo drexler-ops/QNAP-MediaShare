@@ -72,3 +72,16 @@ class Config:
 
 
 config = Config()
+
+
+def apply_umask() -> None:
+    """Make created files/folders writable by other NAS accounts (UMASK, octal, default 000).
+
+    Thumbnails live on a NAS share that a helper-PC worker writes to over SMB with a
+    different account; folders created by the NAS containers (as root) must allow that.
+    """
+    raw = os.environ.get("UMASK", "000").strip()
+    try:
+        os.umask(int(raw, 8))
+    except ValueError:
+        pass

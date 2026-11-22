@@ -84,6 +84,9 @@ def wait_for_db() -> None:
 
 
 def main() -> None:
+    from .config import apply_umask
+
+    apply_umask()
     _setup_logging()
     wait_for_db()
     from .db import session_scope
