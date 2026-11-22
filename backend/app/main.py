@@ -33,10 +33,14 @@ async def lifespan(_app: FastAPI):
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    # Share tokens live in URLs: never leak them to other sites via the Referer header.
-    "Referrer-Policy": "no-referrer",
+    # Other sites only ever learn our origin, never a path (so share tokens in /s/<token> can't leak).
+    # Must not be "no-referrer" in the main app: OpenStreetMap's tile policy requires a Referer and
+    # blocks tiles without one.
+    "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+# The internet-facing share-only app loads nothing from other sites, so it sends no Referer at all.
+SHARE_ONLY_HEADERS = {**SECURITY_HEADERS, "Referrer-Policy": "no-referrer"}
 
 
 def create_app(share_only: bool | None = None) -> FastAPI:
@@ -60,7 +64,7 @@ def create_app(share_only: bool | None = None) -> FastAPI:
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
-        for k, v in SECURITY_HEADERS.items():
+        for k, v in (SHARE_ONLY_HEADERS if share_only else SECURITY_HEADERS).items():
             response.headers.setdefault(k, v)
         return response
 

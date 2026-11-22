@@ -40,3 +40,11 @@ def test_walker_skips_custom_quarantine_and_nas_system_dirs(library, monkeypatch
         os.makedirs(os.path.dirname(full), exist_ok=True)
         open(full, "wb").close()
     assert [r for r, _s, _m in walker_mod.walk_library(library)] == ["Alex/a.jpg"]
+
+
+def test_referrer_policy_lets_map_tiles_load_but_hides_paths(session):
+    # OpenStreetMap blocks tiles requested without a Referer; the main app must send its origin.
+    with TestClient(main_mod.create_app()) as c:
+        assert c.get("/api/health").headers["referrer-policy"] == "strict-origin-when-cross-origin"
+    with TestClient(main_mod.create_app(share_only=True)) as pub:
+        assert pub.get("/robots.txt").headers["referrer-policy"] == "no-referrer"
