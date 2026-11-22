@@ -85,7 +85,7 @@ def test_video_preview_converts_in_the_web_process(tmp_path, monkeypatch):
 
     made = []
 
-    def fake_make(src, out, max_seconds=120):
+    def fake_make(src, out, **options):
         made.append((src, out))
         if "broken" in src:
             raise RuntimeError("Invalid data found when processing input")
@@ -139,3 +139,33 @@ def test_playability_rules_and_background_preview_queue(session, users):
     jobs = session.scalars(select(Job).where(Job.type == "preview").order_by(Job.priority.desc())).all()
     assert jobs[0].payload["ids"] == [hevc_mov.id] and jobs[0].priority > jobs[1].priority
     assert sorted(jobs[1].payload["ids"]) == sorted([h264_avi.id, mjpeg.id])
+
+
+def test_heavy_videos_stream_a_lighter_full_length_copy(session, users, tmp_path, monkeypatch):
+    """4K / very high-bitrate originals: play the original until a full-length 1080p copy exists, then the copy."""
+    from app import previews
+    from app.api import media
+
+    monkeypatch.setattr(media, "preview_path", lambda fid: str(tmp_path / f"{fid}_preview.mp4"))
+    monkeypatch.setattr(previews, "preview_path", lambda fid: str(tmp_path / f"{fid}_preview.mp4"))
+    mp4_head = b"\x00\x00\x00\x18ftypqt  " + b"\x00" * 32
+    big = make_file(session, "Alex/4k.mp4", users["Alex"], mp4_head)
+    small = make_file(session, "Alex/phone.mp4", users["Alex"], mp4_head)
+    hevc4k = make_file(session, "Alex/4k.mov", users["Alex"], mp4_head)
+    for f, codec, (w, h) in ((big, "h264", (3840, 2160)), (small, "h264", (1920, 1080)), (hevc4k, "hevc", (2160, 3840))):
+        f.kind, f.codec, f.process_state, f.width, f.height, f.duration = "video", codec, "done", w, h, 458.0
+    small.size = int(10e6 / 8 * 458)  # 10 Mbit/s
+    session.commit()
+
+    assert previews.heavy(big) and previews.heavy(hevc4k) and not previews.heavy(small)
+    assert previews.needs_preview(big) and not previews.needs_preview(small)
+    assert not previews.hevc_original_ok(hevc4k)  # converted copy instead of the 4K original
+    assert previews.preview_options(big) == {"max_seconds": None, "short_side": 1080, "duration": 458.0}
+    assert previews.preview_options(small)["max_seconds"] == previews.PREVIEW_SECONDS
+
+    assert media.preview_state(session, big) == {"status": "ready"}  # no capped-preview note: plays in full
+    src = media.serve_preview(big)
+    assert src.path.endswith("4k.mp4")  # original until the copy exists
+    open(tmp_path / f"{big.id}_preview.mp4", "wb").write(b"mp4")
+    assert media.serve_preview(big).path == str(tmp_path / f"{big.id}_preview.mp4")
+    assert not previews.needs_preview(big)

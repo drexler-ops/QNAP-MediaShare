@@ -48,7 +48,7 @@ Everything deployment-specific is an environment variable in `.env` (template: [
 | `PUBLIC_SHARE_URL` | same as app | Public base address shown when copying share links |
 | `FACE_THREADS` | `2` | CPU threads per worker process for face detection/recognition |
 | `MAX_UPLOAD_MB` | `20480` | Largest single upload |
-| `DB_SHARED_BUFFERS`, `DB_MEM_LIMIT`, `API_MEM_LIMIT`, `WORKER_MEM_LIMIT` | `512MB`, `1g`, `768m`, `2g` | Resource tuning |
+| `DB_SHARED_BUFFERS`, `DB_MEM_LIMIT`, `API_MEM_LIMIT`, `WORKER_MEM_LIMIT` | `512MB`, `1g`, `1g`, `2g` | Resource tuning |
 
 Helper-PC worker ([.env.pc-worker.example](.env.pc-worker.example)): `NAS_IP`, `DB_PORT`, `DB_PASSWORD`, `SMB_LIBRARY_SHARE`, `SMB_THUMBS_PATH`, `SMB_USER`, `SMB_PASSWORD`, `SMB_VERSION`, `QUARANTINE_DIRNAME`, `PC_WORKER_CONCURRENCY`.
 

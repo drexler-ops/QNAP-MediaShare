@@ -92,17 +92,30 @@ def signature_distance(a: list[str] | None, b: list[str] | None) -> float:
     return sum(hamming(a[i], b[i]) for i in range(n)) / n
 
 
-def make_preview(path: str, out_path: str, max_seconds: int = 120) -> None:
-    """720p H.264/AAC MP4 that every browser can play (HEVC .MOV files don't play on Windows Chrome)."""
+def make_preview(path: str, out_path: str, max_seconds: int | None = 120, short_side: int = 720,
+                 duration: float | None = None) -> None:
+    """H.264/AAC MP4 every browser can play (HEVC .MOV files don't play on Windows Chrome).
+
+    short_side caps the smaller dimension (720 -> 1280x720 landscape / 720x1280 portrait); never upscales.
+    max_seconds=None converts the whole video.
+    """
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     tmp = f"{out_path}.{os.getpid()}-{threading.get_ident()}.tmp.mp4"  # unique: web + workers may race
+    n = short_side
+    scale = f"scale='if(gt(iw,ih),-2,min({n},iw))':'if(gt(iw,ih),min({n},ih),-2)'"
+    limit = ["-t", str(max_seconds)] if max_seconds else []
+    crf = "26" if n <= 720 else "24"
+    # Long 4K sources decode slowly on the NAS: allow ~6x the video's length.
+    timeout = max(1800, int((duration or 0) * 6))
     proc = subprocess.run(
         [
-            config.ffmpeg, "-v", "error", "-y", "-i", path, "-t", str(max_seconds),
-            "-vf", "scale='min(1280,iw)':-2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+            # Thread caps keep a 4K decode + encode around 500 MB (uncapped it scales with core count).
+            config.ffmpeg, "-v", "error", "-y", "-threads", "2", "-i", path, *limit,
+            "-vf", scale, "-c:v", "libx264", "-preset", "veryfast", "-crf", crf,
+            "-threads", "3", "-x264-params", "rc-lookahead=20",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", tmp,
         ],
-        capture_output=True, timeout=1800, check=False,
+        capture_output=True, timeout=timeout, check=False,
     )
     if proc.returncode != 0:
         try:

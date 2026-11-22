@@ -58,7 +58,7 @@ services:
       - models:/models:ro
     ports:
       - "${APP_PORT:-8090}:8080"
-    mem_limit: ${API_MEM_LIMIT:-768m}
+    mem_limit: ${API_MEM_LIMIT:-1g}
 
   worker:
     image: photo-audit:latest

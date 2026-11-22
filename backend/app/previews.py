@@ -1,4 +1,4 @@
-"""On-demand browser-playable video previews (HEVC, MJPEG, ... -> 720p H.264).
+"""On-demand browser-playable video previews (HEVC, MJPEG, ... -> 720p H.264; 4K/huge -> 1080p).
 
 Made by the web process itself in a background thread instead of the job queue, so someone opening
 a video never waits behind long background work (scans, face regrouping). One conversion at a time
@@ -38,21 +38,47 @@ def direct_playable(f) -> bool:
     return f.ext in ("mp4", "m4v", "mov") or is_mp4_container(abs_path(f.path))
 
 
+HEAVY_MBPS = 20  # above this (or above 1080p) the original is too heavy to stream comfortably
+HEAVY_SHORT_SIDE = 1080
+
+
+def heavy(f) -> bool:
+    """4K / very high-bitrate originals: streaming them as-is loads the NAS and buffers remotely."""
+    if f.kind != "video":
+        return False
+    if f.width and f.height and min(f.width, f.height) > HEAVY_SHORT_SIDE:
+        return True
+    return bool(f.duration and f.duration >= 1 and f.size and f.size * 8 / f.duration / 1e6 > HEAVY_MBPS)
+
+
 def hevc_original_ok(f) -> bool:
     """HEVC in an MP4/MOV container: devices with HEVC support (iPhone, Mac, most Android) can play the original."""
-    return f.kind == "video" and f.codec == "hevc" and is_mp4_container(abs_path(f.path))
+    return f.kind == "video" and f.codec == "hevc" and not heavy(f) and is_mp4_container(abs_path(f.path))
 
 
 def needs_preview(f) -> bool:
     return (
         f.kind == "video" and f.status in LIVE and f.process_state == "done"
-        and not direct_playable(f) and not os.path.isfile(preview_path(f.id))
+        and (heavy(f) or not direct_playable(f)) and not os.path.isfile(preview_path(f.id))
     )
+
+
+def preview_options(f) -> dict:
+    """Heavy videos: a full-length 1080p copy (it replaces the original for viewing).
+    Others: 720p, first PREVIEW_SECONDS (Download gets the whole file)."""
+    if heavy(f):
+        return {"max_seconds": None, "short_side": 1080, "duration": f.duration}
+    return {"max_seconds": PREVIEW_SECONDS, "short_side": 720, "duration": f.duration}
+
+
+def capped(f) -> bool:
+    """Does the playable copy stop before the end of the video?"""
+    return not heavy(f) and (f.duration or 0) > PREVIEW_SECONDS
 
 
 def convert_now(f) -> None:
     """Background-job path (worker / helper PC). Same output as the on-demand path."""
-    make_preview(abs_path(f.path), preview_path(f.id), max_seconds=PREVIEW_SECONDS)
+    make_preview(abs_path(f.path), preview_path(f.id), **preview_options(f))
 
 
 _lock = threading.Lock()
@@ -66,12 +92,12 @@ def _friendly(exc: Exception) -> str:
     return f"This video couldn't be converted for playback ({detail}). Download it to watch it."
 
 
-def _convert(file_id: int, rel_path: str) -> None:
+def _convert(file_id: int, rel_path: str, options: dict) -> None:
     with _slot:
         with _lock:
             _state[file_id] = ("running", None)
         try:
-            make_preview(abs_path(rel_path), preview_path(file_id), max_seconds=PREVIEW_SECONDS)
+            make_preview(abs_path(rel_path), preview_path(file_id), **options)
             with _lock:
                 _state.pop(file_id, None)
         except Exception as exc:  # noqa: BLE001 - reported to the viewer
@@ -80,7 +106,7 @@ def _convert(file_id: int, rel_path: str) -> None:
                 _state[file_id] = ("failed", _friendly(exc))
 
 
-def request(file_id: int, rel_path: str, retry: bool = False, start: bool = True) -> dict:
+def request(file_id: int, rel_path: str, retry: bool = False, start: bool = True, options: dict | None = None) -> dict:
     """Status of a preview; starts converting on first ask (or on retry after a failure).
 
     start=False only reports (the viewer asks first, then may play an HEVC original instead).
@@ -97,5 +123,6 @@ def request(file_id: int, rel_path: str, retry: bool = False, start: bool = True
             ahead = sum(1 for k, (s, _) in _state.items() if k != file_id and s in ("queued", "running")) if st[0] == "queued" else 0
             return {"status": "processing", "stage": st[0], "ahead": ahead}
         _state[file_id] = ("queued", None)
-    threading.Thread(target=_convert, args=(file_id, rel_path), daemon=True, name=f"preview-{file_id}").start()
+    opts = options or {"max_seconds": PREVIEW_SECONDS}
+    threading.Thread(target=_convert, args=(file_id, rel_path, opts), daemon=True, name=f"preview-{file_id}").start()
     return {"status": "processing", "stage": "queued", "ahead": 0}

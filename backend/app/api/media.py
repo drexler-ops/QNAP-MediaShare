@@ -93,11 +93,12 @@ def preview_state(db: Session, f: File, retry: bool = False, start: bool = True)
     if f.kind != "video":
         raise HTTPException(400, "Not a video")
     if _direct_playable(f) and os.path.isfile(abs_path(f.path)):
+        # Plays as-is. Heavy ones get a lighter copy from the background queue; until then, the original.
         return {"status": "ready"}
-    st = previews.request(f.id, f.path, retry=retry, start=start)
+    st = previews.request(f.id, f.path, retry=retry, start=start, options=previews.preview_options(f))
     if st["status"] == "missing":
         st["hevc_original"] = previews.hevc_original_ok(f)
-    if st["status"] == "ready" and (f.duration or 0) > previews.PREVIEW_SECONDS:
+    if st["status"] == "ready" and previews.capped(f):
         st["preview_seconds"] = previews.PREVIEW_SECONDS  # only the start is playable in the app
     return st
 
@@ -109,11 +110,11 @@ def serve_preview(f: File, original: bool = False) -> FileResponse:
         raise HTTPException(400, "Not a video")
     if original and previews.hevc_original_ok(f) and os.path.isfile(abs_path(f.path)):
         return FileResponse(abs_path(f.path), media_type="video/mp4")  # inline, for HEVC-capable devices
+    out = preview_path(f.id)
+    if os.path.isfile(out):  # converted copy (also the lighter stand-in for heavy direct-playable originals)
+        return FileResponse(out, media_type="video/mp4", headers=CACHE)
     if _direct_playable(f) and os.path.isfile(abs_path(f.path)):
         return FileResponse(abs_path(f.path), media_type="video/mp4")
-    out = preview_path(f.id)
-    if os.path.isfile(out):
-        return FileResponse(out, media_type="video/mp4", headers=CACHE)
     raise HTTPException(404, "Preview not ready")
 
 
