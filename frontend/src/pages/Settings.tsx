@@ -21,12 +21,19 @@ export default function SettingsPage({ me }: { me: Me }) {
       <div className="page-head">
         <h1>Settings</h1>
       </div>
-      <div className="settings-grid">
-        <Account me={me} />
-        {me.is_admin && <Users me={me} />}
-        <Detection />
-        {me.is_admin && <NasResources />}
-        <SystemStatus />
+      {/* Two columns sized to their content: the narrow forms (account, detection settings) stack on the
+          left; the wide panels (live resources, users table, job log) stack on the right. One column on
+          smaller screens. */}
+      <div className="settings-layout">
+        <div className="settings-col side">
+          <Account me={me} />
+          <Detection />
+        </div>
+        <div className="settings-col main">
+          {me.is_admin && <NasResources />}
+          {me.is_admin && <Users me={me} />}
+          <SystemStatus />
+        </div>
       </div>
     </>
   );
@@ -87,7 +94,7 @@ function Users({ me }: { me: Me }) {
   });
 
   return (
-    <section className="card pad stack" style={{ gridColumn: "1 / -1" }}>
+    <section className="card pad stack">
       <h2>Users <span className="badge accent">Admin</span></h2>
       <p className="muted small" style={{ margin: 0 }}>
         Each user owns the files in their top-level folder of the library. Only the owner can approve deleting their files; files
@@ -262,7 +269,7 @@ function SystemStatus() {
   const total = (p.done ?? 0) + (p.pending ?? 0) + (p.error ?? 0);
   const proc = q.data.jobs.process ?? {};
   return (
-    <section className="card pad stack" style={{ gridColumn: "1 / -1" }}>
+    <section className="card pad stack">
       <h2>System status</h2>
       <div className="row">
         <span className="badge">{total.toLocaleString()} files indexed</span>

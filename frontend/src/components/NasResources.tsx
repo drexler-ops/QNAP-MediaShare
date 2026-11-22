@@ -105,15 +105,15 @@ export default function NasResources() {
     setHistory(hist.current);
   }, [q.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (q.isError) return <section className="card pad" style={{ gridColumn: "1 / -1" }}><h2>NAS resources</h2><p className="muted">Couldn't read system stats ({String((q.error as Error).message)}).</p></section>;
-  if (!q.data) return <section className="card pad" style={{ gridColumn: "1 / -1" }}><Loading /></section>;
+  if (q.isError) return <section className="card pad"><h2>NAS resources</h2><p className="muted">Couldn't read system stats ({String((q.error as Error).message)}).</p></section>;
+  if (!q.data) return <section className="card pad"><Loading /></section>;
   const s = q.data;
   const cores = s.cpu.cores.length || 1;
   const memPct = (s.memory.used / Math.max(s.memory.total, 1)) * 100;
   const jobs = Object.entries(s.jobs).filter(([, v]) => (v.queued ?? 0) + (v.running ?? 0) > 0);
 
   return (
-    <section className="card pad stack" style={{ gridColumn: "1 / -1" }}>
+    <section className="card pad stack res-panel">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h2>NAS resources <span className="badge accent">Admin</span></h2>
         <span className="small muted">{s.uptime !== null && `Up ${duration(s.uptime)} · `}updates every {POLL_MS / 1000} s</span>
