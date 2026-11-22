@@ -22,7 +22,6 @@ from .deps import current_user, get_db
 
 router = APIRouter(prefix="/api/files", tags=["media"])
 
-BROWSER_SAFE_VIDEO = {"h264"}
 # Image formats every browser renders natively (served as-is); others are converted once to JPEG.
 BROWSER_SAFE_IMAGE = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp"}
 CACHE = {"Cache-Control": "private, max-age=86400"}
@@ -78,26 +77,38 @@ def serve_download(f: File) -> FileResponse:
 
 
 def _direct_playable(f: File) -> bool:
-    return f.codec in BROWSER_SAFE_VIDEO and f.ext in ("mp4", "m4v", "mov")
+    from .. import previews
+
+    return previews.direct_playable(f)
 
 
-def preview_state(db: Session, f: File, retry: bool = False) -> dict:
-    """Is a browser-playable version ready? Starts converting (HEVC etc.) on first ask."""
+def preview_state(db: Session, f: File, retry: bool = False, start: bool = True) -> dict:
+    """Is a browser-playable version ready? Starts converting (HEVC etc.) on first ask.
+
+    start=False: just report ("missing" if nothing is ready); hevc_original says whether the original
+    can be streamed to devices that play HEVC themselves.
+    """
     from .. import previews
 
     if f.kind != "video":
         raise HTTPException(400, "Not a video")
     if _direct_playable(f) and os.path.isfile(abs_path(f.path)):
         return {"status": "ready"}
-    st = previews.request(f.id, f.path, retry=retry)
+    st = previews.request(f.id, f.path, retry=retry, start=start)
+    if st["status"] == "missing":
+        st["hevc_original"] = previews.hevc_original_ok(f)
     if st["status"] == "ready" and (f.duration or 0) > previews.PREVIEW_SECONDS:
         st["preview_seconds"] = previews.PREVIEW_SECONDS  # only the start is playable in the app
     return st
 
 
-def serve_preview(f: File) -> FileResponse:
+def serve_preview(f: File, original: bool = False) -> FileResponse:
+    from .. import previews
+
     if f.kind != "video":
         raise HTTPException(400, "Not a video")
+    if original and previews.hevc_original_ok(f) and os.path.isfile(abs_path(f.path)):
+        return FileResponse(abs_path(f.path), media_type="video/mp4")  # inline, for HEVC-capable devices
     if _direct_playable(f) and os.path.isfile(abs_path(f.path)):
         return FileResponse(abs_path(f.path), media_type="video/mp4")
     out = preview_path(f.id)
@@ -127,10 +138,10 @@ def original(file_id: int, db: Session = Depends(get_db), _: User = Depends(curr
 
 
 @router.get("/{file_id}/preview/status")
-def preview_status(file_id: int, retry: bool = False, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    return preview_state(db, _file(db, file_id), retry=retry)
+def preview_status(file_id: int, retry: bool = False, start: bool = True, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    return preview_state(db, _file(db, file_id), retry=retry, start=start)
 
 
 @router.get("/{file_id}/preview")
-def preview(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    return serve_preview(_file(db, file_id))
+def preview(file_id: int, original: bool = False, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    return serve_preview(_file(db, file_id), original=original)

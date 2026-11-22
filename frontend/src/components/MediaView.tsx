@@ -15,36 +15,51 @@ export function VideoPlayer({ file, autoPlay, loop, customControls }: { file: Fi
   const [attempt, setAttempt] = useState(0); // bump to retry a failed conversion
   const [playError, setPlayError] = useState(false);
   const [buffering, setBuffering] = useState(false);
+  // HEVC (most iPhone video) plays natively on iPhone, Mac and most Android phones: stream the original
+  // there instead of waiting for a converted copy. If it won't play after all, convert as usual.
+  const [source, setSource] = useState<"preview" | "original">("preview");
+  const [convert, setConvert] = useState(false);
 
   useEffect(() => {
     let alive = true;
     let timer: number | undefined;
     let retry = attempt > 0;
+    const peekFirst = !convert && !retry && file.codec === "hevc" && canPlayHevc();
     setSt({ status: "checking" });
     setPlayError(false);
-    const check = async () => {
+    setSource("preview");
+    const withParam = (u: string, p: string) => `${u}${u.includes("?") ? "&" : "?"}${p}`;
+    const check = async (peek: boolean) => {
       try {
         const base = urls.previewStatus(file.id);
-        const r = await api<PreviewStatus>(retry ? `${base}${base.includes("?") ? "&" : "?"}retry=1` : base);
+        const r = await api<PreviewStatus>(retry ? withParam(base, "retry=1") : peek ? withParam(base, "start=0") : base);
         retry = false;
         if (!alive) return;
+        if (r.status === "missing") {
+          if (r.hevc_original) {
+            setSource("original");
+            setSt({ status: "ready" });
+          } else check(false); // nothing to stream directly: convert
+          return;
+        }
         setSt(r);
-        if (r.status === "processing") timer = window.setTimeout(check, 1500);
+        if (r.status === "processing") timer = window.setTimeout(() => check(false), 1500);
       } catch (e) {
         if (alive) setSt({ status: "failed", error: `Couldn't check this video (${e instanceof Error ? e.message : String(e)}).` });
       }
     };
-    check();
+    check(peekFirst);
     return () => {
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [file.id, urls, attempt]);
+  }, [file.id, file.codec, urls, attempt, convert]);
 
   const poster = file.thumb ? urls.thumb(file.id, "l") : undefined;
   if (st.status === "ready" && !playError) {
+    const src = source === "original" ? `${urls.preview(file.id)}${urls.preview(file.id).includes("?") ? "&" : "?"}original=1` : urls.preview(file.id);
     const events = {
-      onError: () => setPlayError(true),
+      onError: () => (source === "original" ? setConvert(true) : setPlayError(true)),
       onWaiting: () => setBuffering(true),
       onPlaying: () => setBuffering(false),
       onCanPlay: () => setBuffering(false),
@@ -55,9 +70,9 @@ export function VideoPlayer({ file, autoPlay, loop, customControls }: { file: Fi
     return (
       <>
         {customControls ? (
-          <TouchVideo src={urls.preview(file.id)} poster={poster} autoPlay={autoPlay} loop={loop} events={events} />
+          <TouchVideo key={src} src={src} poster={poster} autoPlay={autoPlay} loop={loop} events={events} />
         ) : (
-          <video src={urls.preview(file.id)} poster={poster} controls autoPlay={autoPlay} loop={loop} playsInline onClick={(e) => e.stopPropagation()} {...events} />
+          <video key={src} src={src} poster={poster} controls autoPlay={autoPlay} loop={loop} playsInline onClick={(e) => e.stopPropagation()} {...events} />
         )}
         {buffering && <div className="vwait-msg vwait-float"><Spinner /> Loading…</div>}
         {note}
@@ -89,8 +104,18 @@ export function VideoPlayer({ file, autoPlay, loop, customControls }: { file: Fi
   );
 }
 
+let hevcSupport: boolean | null = null;
+function canPlayHevc(): boolean {
+  if (hevcSupport === null) {
+    const v = document.createElement("video");
+    hevcSupport = !!(v.canPlayType('video/mp4; codecs="hvc1"') || v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"'));
+  }
+  return hevcSupport;
+}
+
 type PreviewStatus = {
-  status: "checking" | "ready" | "processing" | "failed";
+  status: "checking" | "ready" | "processing" | "failed" | "missing";
+  hevc_original?: boolean;
   stage?: "queued" | "running";
   ahead?: number;
   error?: string;

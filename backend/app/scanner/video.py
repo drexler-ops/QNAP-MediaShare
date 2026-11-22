@@ -5,6 +5,7 @@ import io
 import json
 import os
 import subprocess
+import threading
 from dataclasses import dataclass
 
 from PIL import Image
@@ -94,7 +95,7 @@ def signature_distance(a: list[str] | None, b: list[str] | None) -> float:
 def make_preview(path: str, out_path: str, max_seconds: int = 120) -> None:
     """720p H.264/AAC MP4 that every browser can play (HEVC .MOV files don't play on Windows Chrome)."""
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    tmp = out_path + ".tmp.mp4"
+    tmp = f"{out_path}.{os.getpid()}-{threading.get_ident()}.tmp.mp4"  # unique: web + workers may race
     proc = subprocess.run(
         [
             config.ffmpeg, "-v", "error", "-y", "-i", path, "-t", str(max_seconds),

@@ -161,15 +161,15 @@ def full(token: str, file_id: int, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/s/{token}/files/{file_id}/preview/status")
-def preview_status(token: str, file_id: int, request: Request, retry: bool = False, db: Session = Depends(get_db)):
+def preview_status(token: str, file_id: int, request: Request, retry: bool = False, start: bool = True, db: Session = Depends(get_db)):
     _, f = _shared_file(request, db, token, file_id)
-    return media.preview_state(db, f, retry=retry)
+    return media.preview_state(db, f, retry=retry, start=start)
 
 
 @router.get("/s/{token}/files/{file_id}/preview")
-def preview(token: str, file_id: int, request: Request, db: Session = Depends(get_db)):
+def preview(token: str, file_id: int, request: Request, original: bool = False, db: Session = Depends(get_db)):
     _, f = _shared_file(request, db, token, file_id)
-    return media.serve_preview(f)
+    return media.serve_preview(f, original=original)
 
 
 @router.get("/s/{token}/files/{file_id}/download")

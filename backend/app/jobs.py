@@ -118,6 +118,7 @@ def handle_process(session: Session, job: Job) -> dict[str, Any]:
                 File.id.in_(ids), File.kind == "image", File.thumb_ready.is_(True), File.face_state == "pending")))
             if ready:
                 enqueue(session, "faces", {"ids": ready}, priority=-1)
+        enqueue_previews(session, ids)  # new/changed videos get a playable copy before anyone opens them
     maybe_enqueue_group(session, exclude_job_id=job.id)
     return result
 
@@ -179,16 +180,45 @@ def handle_group(session: Session, job: Job) -> dict[str, Any]:
     return run_grouping(session)
 
 
-def handle_preview(session: Session, job: Job) -> dict[str, Any]:
-    from .paths import abs_path
-    from .scanner.thumbs import preview_path
-    from .scanner.video import make_preview
+PREVIEW_BATCH = 10
 
-    f = session.get(File, job.payload["file_id"])
-    if f is None:
-        return {"skipped": True}
-    make_preview(abs_path(f.path), preview_path(f.id))
-    return {"file_id": f.id}
+
+def enqueue_previews(session: Session, ids: list[int] | None = None) -> int:
+    """Queue background conversion for videos browsers can't play as-is (ids=None: whole library).
+
+    Low priority, after indexing and uploads; Live Photo motion clips (small, opened most) first.
+    """
+    from .previews import needs_preview
+
+    q = select(File).where(File.kind == "video", File.status.in_(("active", "pending_delete")), File.process_state == "done")
+    if ids is not None:
+        q = q.where(File.id.in_(ids))
+    todo = [f for f in session.scalars(q.order_by(File.id)) if needs_preview(f)]
+    n = 0
+    for live in (True, False):
+        batch = [f.id for f in todo if (f.role == "live_video") == live]
+        for i in range(0, len(batch), PREVIEW_BATCH):
+            enqueue(session, "preview", {"ids": batch[i:i + PREVIEW_BATCH]}, priority=-1 if live else -2)
+            n += 1
+    return n
+
+
+def handle_preview(session: Session, job: Job) -> dict[str, Any]:
+    """Make browser-playable copies ahead of time, so nobody waits when opening a video."""
+    from .previews import convert_now, needs_preview
+
+    ids = job.payload.get("ids") or [job.payload["file_id"]]
+    done, failed = 0, []
+    for f in session.scalars(select(File).where(File.id.in_(ids))):
+        if not needs_preview(f):
+            continue  # already converted (maybe on demand) or no longer needed
+        try:
+            convert_now(f)
+            done += 1
+        except Exception as exc:  # one bad clip must not stop the batch; the viewer reports it if opened
+            log.warning("preview for %s failed: %s", f.path, str(exc)[-200:])
+            failed.append(f.id)
+    return {"converted": done, "failed": failed}
 
 
 def handle_purge(session: Session, job: Job) -> dict[str, Any]:

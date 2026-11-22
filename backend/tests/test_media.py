@@ -4,6 +4,7 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from sqlalchemy import select
 
 from app.main import create_app
 from app.scanner.thumbs import clear_derived, full_path
@@ -111,3 +112,30 @@ def test_video_preview_converts_in_the_web_process(tmp_path, monkeypatch):
     assert bad["status"] == "failed" and "couldn't be converted" in bad["error"] and "Invalid data" in bad["error"]
     assert previews.request(902, "Alex/broken.mov")["status"] == "failed"  # remembered, not retried every poll
     assert previews.request(902, "Alex/broken.mov", retry=True)["status"] == "processing"  # explicit retry
+
+
+def test_playability_rules_and_background_preview_queue(session, users):
+    """H.264 in an MP4 container plays as-is even when misnamed; other videos get background conversion."""
+    from app.jobs import enqueue_previews
+    from app.models import Job
+    from app.previews import direct_playable, hevc_original_ok, needs_preview
+
+    mp4_head = b"\x00\x00\x00\x18ftypqt  " + b"\x00" * 32
+    avi_head = b"RIFF\x00\x00\x00\x00AVI LIST" + b"\x00" * 32
+    h264_jpg = make_file(session, "Alex/IMG_1.JPG", users["Alex"], mp4_head)   # Live Photo clip named .JPG
+    h264_avi = make_file(session, "Alex/old.avi", users["Alex"], avi_head)
+    hevc_mov = make_file(session, "Alex/IMG_2.MOV", users["Alex"], mp4_head)
+    mjpeg = make_file(session, "Alex/cam.avi", users["Alex"], avi_head)
+    for f, codec in ((h264_jpg, "h264"), (h264_avi, "h264"), (hevc_mov, "hevc"), (mjpeg, "mjpeg")):
+        f.kind, f.codec, f.process_state = "video", codec, "done"
+    hevc_mov.role = "live_video"
+    session.commit()
+
+    assert direct_playable(h264_jpg) and not direct_playable(h264_avi)
+    assert hevc_original_ok(hevc_mov) and not hevc_original_ok(mjpeg)
+    assert not needs_preview(h264_jpg) and needs_preview(h264_avi) and needs_preview(mjpeg)
+
+    assert enqueue_previews(session) == 2  # live clip batch first (higher priority), then the rest
+    jobs = session.scalars(select(Job).where(Job.type == "preview").order_by(Job.priority.desc())).all()
+    assert jobs[0].payload["ids"] == [hevc_mov.id] and jobs[0].priority > jobs[1].priority
+    assert sorted(jobs[1].payload["ids"]) == sorted([h264_avi.id, mjpeg.id])

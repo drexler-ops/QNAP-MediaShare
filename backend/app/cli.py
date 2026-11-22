@@ -36,6 +36,7 @@ def main() -> None:
     ap.add_argument("password", nargs="?")
     sub.add_parser("scan", help="queue a library scan now")
     sub.add_parser("regroup", help="queue duplicate regrouping now")
+    sub.add_parser("previews", help="queue playable copies for every video that needs one (one-time catch-up)")
     args = parser.parse_args()
 
     with session_scope() as s:
@@ -60,6 +61,10 @@ def main() -> None:
         elif args.cmd == "regroup":
             enqueue(s, "group", unique=True)
             print("regroup queued")
+        elif args.cmd == "previews":
+            from .jobs import enqueue_previews
+
+            print(f"{enqueue_previews(s)} preview batches queued")
 
 
 if __name__ == "__main__":
