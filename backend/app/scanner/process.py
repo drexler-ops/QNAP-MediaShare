@@ -13,6 +13,43 @@ from .metadata import parse_exif, run_exiftool
 
 log = logging.getLogger(__name__)
 
+# ISO-BMFF "ftyp" brands: still-image containers vs. video containers.
+_IMAGE_BRANDS = {b"heic", b"heix", b"heim", b"heis", b"mif1", b"msf1", b"avif", b"avis"}
+_VIDEO_BRANDS = {b"qt  ", b"isom", b"iso2", b"iso4", b"iso5", b"iso6", b"mp41", b"mp42", b"M4V ", b"M4VP",
+                 b"avc1", b"3gp4", b"3gp5", b"3gp6", b"3g2a", b"dash", b"f4v ", b"MSNV", b"XAVC"}
+
+
+class NotMedia(Exception):
+    pass
+
+
+def sniff_kind(head: bytes) -> str | None:
+    """What a file really is, from its first bytes: "image", "video", "not_media", or None (unknown).
+
+    File extensions lie: some iPhone export tools save Live Photo motion clips as IMG_1234.JPG.
+    """
+    if len(head) < 12:
+        return None
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in _IMAGE_BRANDS:
+            return "image"
+        if brand in _VIDEO_BRANDS:
+            return "video"
+        return None
+    if head[:3] == b"\xff\xd8\xff" or head[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image"
+    if head[:4] in (b"GIF8", b"II*\x00", b"MM\x00*") or head[:2] == b"BM":
+        return "image"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image"
+    if (head[:4] == b"RIFF" and head[8:12] == b"AVI ") or head[:4] == b"\x1a\x45\xdf\xa3":
+        return "video"
+    stripped = head.lstrip()
+    if stripped[:1] in (b"<", b"{"):
+        return "not_media"
+    return None
+
 
 def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
     files = list(session.scalars(select(File).where(File.id.in_(file_ids))))
@@ -30,6 +67,13 @@ def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
     for f in files:
         full = paths[f.id]
         try:
+            with open(full, "rb") as fh:
+                actual = sniff_kind(fh.read(16))
+            if actual == "not_media":
+                raise NotMedia("Not a photo or video (looks like a text/XML file, e.g. an iPhone .AAE edit file)")
+            if actual and actual != f.kind:
+                log.info("%s: content is %s despite the .%s extension", f.path, actual, f.ext)
+                f.kind = actual
             tags = tags_by_path.get(full)
             if tags:
                 for key, value in parse_exif(tags).items():
@@ -49,8 +93,11 @@ def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
             stats["error"] += 1
         except Exception as exc:
             log.warning("processing %s failed: %s", f.path, exc)
+            msg = str(exc)
+            if "cannot identify image file" in msg:
+                msg = "Damaged or unsupported image file (the image data couldn't be read)"
             f.process_state = "error"
-            f.process_error = str(exc)[:1000]
+            f.process_error = msg[:1000]
             stats["error"] += 1
         session.commit()
     return stats

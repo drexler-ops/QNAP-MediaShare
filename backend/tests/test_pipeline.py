@@ -95,3 +95,25 @@ def test_full_pipeline(session, users, library):
     # Rescan after deleting a file marks it missing.
     os.remove(os.path.join(library, "Riley", "unique.jpg"))
     assert scan(session).missing == 1
+
+
+def test_live_photo_clip_saved_with_jpg_extension(session, users, library):
+    """Some iPhone exports name the Live Photo motion clip IMG_1234.JPG: it must be handled as a video."""
+    import subprocess
+
+    from PIL import Image
+
+    folder = os.path.join(library, "Sam", "Iphone XR photos")
+    os.makedirs(folder)
+    Image.new("RGB", (400, 300), (30, 90, 160)).save(os.path.join(folder, "IMG_2705.HEIC"), format="HEIF")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=30", "-t", "2",
+                    "-pix_fmt", "yuv420p", "-c:v", "libx264", "-f", "mov", os.path.join(folder, "IMG_2705.JPG")],
+                   check=True)
+    res = scan(session)
+    process_files(session, res.to_process)
+    clip = session.scalar(select(File).where(File.path == "Sam/Iphone XR photos/IMG_2705.JPG"))
+    assert clip.process_state == "done" and clip.kind == "video" and clip.codec == "h264"
+    assert run_grouping(session)["live_pairs"] == 1  # paired with its still, not left as a broken "photo"
+    still = session.scalar(select(File).where(File.path == "Sam/Iphone XR photos/IMG_2705.HEIC"))
+    session.refresh(clip)
+    assert clip.role == "live_video" and clip.item_id == still.item_id
