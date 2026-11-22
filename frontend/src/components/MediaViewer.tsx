@@ -211,22 +211,39 @@ function MediaViewer({
   }, []);
 
   // Touch swipes on the stage (only when not zoomed in): left/right = next/previous, down = close.
+  // A second finger turns the gesture into a pinch (handled by ZoomImage): never a swipe.
+  const fingers = useRef<Set<number>>(new Set());
+  const multiTouch = useRef(false);
   const onStageDown = (e: React.PointerEvent) => {
-    if (e.pointerType !== "touch" || zoomed || tagging) return;
+    if (e.pointerType !== "touch") return;
+    fingers.current.add(e.pointerId);
+    if (fingers.current.size > 1) {
+      multiTouch.current = true;
+      swipe.current = null;
+      setDrag(null);
+      return;
+    }
+    if (zoomed || tagging) return;
     swipe.current = { x: e.clientX, y: e.clientY, id: e.pointerId, t: Date.now() };
+  };
+  const releaseFinger = (e: React.PointerEvent) => {
+    fingers.current.delete(e.pointerId);
+    if (fingers.current.size === 0) multiTouch.current = false;
   };
   const onStageMove = (e: React.PointerEvent) => {
     const s = swipe.current;
-    if (!s || s.id !== e.pointerId) return;
+    if (!s || s.id !== e.pointerId || multiTouch.current) return;
     const dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
     if (Math.abs(dx) > 8 || Math.abs(dy) > 8) setDrag({ dx: Math.abs(dx) > Math.abs(dy) ? dx : 0, dy: dy > 0 && dy > Math.abs(dx) ? dy : 0 });
   };
   const onStageUp = (e: React.PointerEvent) => {
+    const wasMulti = multiTouch.current;
+    if (e.pointerType === "touch") releaseFinger(e);
     const s = swipe.current;
     swipe.current = null;
     setDrag(null);
-    if (!s || s.id !== e.pointerId) return;
+    if (!s || s.id !== e.pointerId || wasMulti) return;
     const dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
     const fast = Date.now() - s.t < 600;
@@ -292,7 +309,8 @@ function MediaViewer({
         onPointerDown={onStageDown}
         onPointerMove={onStageMove}
         onPointerUp={onStageUp}
-        onPointerCancel={() => {
+        onPointerCancel={(e) => {
+          if (e.pointerType === "touch") releaseFinger(e);
           swipe.current = null;
           setDrag(null);
         }}
@@ -338,6 +356,15 @@ function MediaViewer({
   );
 }
 
+/** Pointer capture keeps a gesture on the photo even if a finger slides off it. Never let it break the gesture. */
+function capture(e: React.PointerEvent) {
+  try {
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  } catch {
+    /* pointer already gone */
+  }
+}
+
 /** Image with wheel/drag/double-click (double-tap) zoom, plus an optional face overlay that zooms with it. */
 function ZoomImage({
   file,
@@ -364,6 +391,8 @@ function ZoomImage({
   const drag = useRef<{ px: number; py: number; x: number; y: number; id: number } | null>(null);
   const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
   const touchToggled = useRef(0); // browsers may also fire dblclick after a double-tap
+  const touches = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinch = useRef<{ d0: number; mx0: number; my0: number; s0: number; x0: number; y0: number } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -415,6 +444,21 @@ function ZoomImage({
     return [clientX - r.left - r.width / 2, clientY - r.top - r.height / 2] as const;
   };
 
+  const endPointer = (id: number) => {
+    touches.current.delete(id);
+    if (drag.current?.id === id) drag.current = null;
+    if (pinch.current && touches.current.size < 2) {
+      pinch.current = null;
+      setView((v) => {
+        if (v.s <= 1.02) return { s: 1, x: 0, y: 0 }; // pinched back out: snap to fit
+        // One finger still down: carry on panning with it.
+        const rest = [...touches.current.entries()][0];
+        if (rest) drag.current = { px: rest[1].x, py: rest[1].y, x: v.x, y: v.y, id: rest[0] };
+        return v;
+      });
+    }
+  };
+
   const toggleZoomAt = (clientX: number, clientY: number) => {
     if (view.s > 1) setView({ s: 1, x: 0, y: 0 });
     else zoomAt(2.5, ...rel(clientX, clientY));
@@ -453,6 +497,18 @@ function ZoomImage({
       }}
       onPointerDown={(e) => {
         if (e.pointerType === "touch") {
+          touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          capture(e);
+          if (touches.current.size === 2) {
+            // Second finger: start a pinch (the stage sees it too and cancels any swipe).
+            const [a, b] = [...touches.current.values()];
+            const [mx, my] = rel((a.x + b.x) / 2, (a.y + b.y) / 2);
+            pinch.current = { d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx0: mx, my0: my, s0: view.s, x0: view.x, y0: view.y };
+            drag.current = null;
+            lastTap.current = null;
+            return;
+          }
+          if (touches.current.size > 2) return;
           const now = Date.now();
           const lt = lastTap.current;
           if (lt && now - lt.t < 320 && Math.hypot(e.clientX - lt.x, e.clientY - lt.y) < 40) {
@@ -466,15 +522,28 @@ function ZoomImage({
         }
         if (view.s === 1 || (e.pointerType === "mouse" && e.button !== 0)) return;
         e.stopPropagation(); // panning a zoomed photo is not a swipe
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        capture(e);
         drag.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, id: e.pointerId };
       }}
       onPointerMove={(e) => {
+        if (e.pointerType === "touch" && touches.current.has(e.pointerId)) {
+          touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          const pz = pinch.current;
+          if (pz && touches.current.size >= 2) {
+            const [a, b] = [...touches.current.values()];
+            const [mx, my] = rel((a.x + b.x) / 2, (a.y + b.y) / 2);
+            const s = Math.min(8, Math.max(1, (pz.s0 * Math.hypot(a.x - b.x, a.y - b.y)) / pz.d0));
+            const k = s / pz.s0;
+            // Keep the photo point that was under the fingers' midpoint under the midpoint now.
+            setView({ s, x: mx - (pz.mx0 - pz.x0) * k, y: my - (pz.my0 - pz.y0) * k });
+            return;
+          }
+        }
         const d = drag.current;
         if (d && d.id === e.pointerId) setView((v) => ({ ...v, x: d.x + e.clientX - d.px, y: d.y + e.clientY - d.py }));
       }}
-      onPointerUp={() => (drag.current = null)}
-      onPointerCancel={() => (drag.current = null)}
+      onPointerUp={(e) => endPointer(e.pointerId)}
+      onPointerCancel={(e) => endPointer(e.pointerId)}
     >
       {src ? (
         <div
@@ -680,7 +749,7 @@ function InfoPanel({
       <div className="viewer-keys hide-touch">
         <kbd>←</kbd><kbd>→</kbd> browse · <kbd>+</kbd><kbd>−</kbd><kbd>0</kbd> zoom · <kbd>P</kbd> faces · <kbd>A</kbd> add to album · <kbd>F</kbd> full screen · <kbd>I</kbd> info · <kbd>Esc</kbd> close
       </div>
-      <div className="viewer-keys show-touch">Double-tap to zoom · swipe for next · swipe down to close</div>
+      <div className="viewer-keys show-touch">Pinch or double-tap to zoom · swipe for next · swipe down to close</div>
     </aside>
   );
 }
