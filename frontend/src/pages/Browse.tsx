@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api, qs, type Facets, type ItemInfo } from "../api";
 import { useViewer } from "../components/MediaViewer";
 import AlbumPicker from "../components/AlbumPicker";
@@ -143,6 +144,7 @@ export default function Browse() {
         <h1>Browse</h1>
         <span className="muted">{items.data ? `${items.data.total.toLocaleString()} items` : ""}</span>
         <div className="spacer" />
+        <Link to="/upload" className="btn">⬆ Upload</Link>
         <button className={selecting ? "btn primary" : "btn"} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}>
           {selecting ? "Done" : "Select"}
         </button>

@@ -90,6 +90,9 @@ services:
       APP_NAME: ${APP_NAME:-}
       SHARE_ONLY: "true"
       SKIP_INIT_DB: "1"
+      # Only the Funnel proxy (and localhost) can reach this container, so trust its
+      # X-Forwarded-For: the real visitor IP is needed for password-attempt rate limiting.
+      FORWARDED_ALLOW_IPS: "*"
     volumes:
       - ${LIBRARY_PATH}:/library:ro
       - ${THUMBS_PATH}:/thumbs
@@ -119,6 +122,28 @@ services:
       - ./deploy/tailscale/serve-app.json:/config/serve.json:ro
     mem_limit: 256m
 
+  # Optional PUBLIC share links via Tailscale Funnel (COMPOSE_PROFILES=...,public and TS_SHARE_AUTHKEY).
+  # A separate Tailscale machine that publishes ONLY the share-only service to the internet at
+  # https://<TS_SHARE_HOSTNAME>.<tailnet>.ts.net. The main app is never reachable through it.
+  tailscale-share:
+    image: tailscale/tailscale:v1.82.5
+    profiles: ["public"]
+    restart: unless-stopped
+    hostname: ${TS_SHARE_HOSTNAME:-photo-share}
+    depends_on:
+      share: { condition: service_started }
+    environment:
+      TS_AUTHKEY: ${TS_SHARE_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_SHARE_HOSTNAME:-photo-share}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tsshare-state:/var/lib/tailscale
+      - ./deploy/tailscale/serve-share.json:/config/serve.json:ro
+    mem_limit: 256m
+
 volumes:
   pgdata:
   tsstate:
+  tsshare-state:

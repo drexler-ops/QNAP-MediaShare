@@ -196,6 +196,7 @@ export const Icons = {
   overview: I(<><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>),
   review: I(<><rect x="2" y="5" width="9" height="14" rx="1.5" /><rect x="13" y="5" width="9" height="14" rx="1.5" /></>),
   albums: I(<><rect x="3" y="6" width="14" height="14" rx="2" /><path d="M7 3h12a2 2 0 0 1 2 2v12" /><path d="m3 16 4-4 4 4 2-2 4 4" /></>),
+  upload: I(<><path d="M12 16V4" /><path d="m6 10 6-6 6 6" /><path d="M4 20h16" /></>),
   browse: I(<><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 16-5-5-9 9" /></>),
   map: I(<><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z" /><path d="M9 4v14M15 6v14" /></>),
   pending: I(<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>),

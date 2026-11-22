@@ -206,10 +206,43 @@ Then start it: `cd <app-dir> && ./qnap-compose.sh up -d` (or over SSH: `ssh <nas
 
 **Remove someone:** delete or unshare them in the Tailscale admin (cuts network access), and **Deactivate** them in the app.
 
+## E. Public share links from the internet (optional, Tailscale Funnel)
+
+Album share links (`/s/<link>`) normally work only on your home network (and in your tailnet). This step publishes **only the share-only service** to the internet at `https://<TS_SHARE_HOSTNAME>.<tailnet>.ts.net`, so anyone with a link can open it on any device, no app needed. It runs as a **second, separate** Tailscale machine: the main app, sign-in page, QTS and file shares are never reachable through it, and nothing changes on your router. Do section D first (it enables HTTPS certificates for your tailnet).
+
+**1. Allow Funnel in your access policy (once)**
+Open https://login.tailscale.com/admin/acls. The policy needs a `nodeAttrs` entry granting `funnel`. Newer tailnets include it by default. If it's missing, add this at the top level of the policy and **Save**:
+```json
+"nodeAttrs": [
+  { "target": ["autogroup:member"], "attr": ["funnel"] }
+],
+```
+
+**2. Generate a second auth key**
+**Settings → Keys → Generate auth key** with the same settings as before (Reusable off, Ephemeral off). Copy it.
+
+**3. Configure the NAS**
+Edit `<app-dir>/.env`:
+```ini
+COMPOSE_PROFILES=remote,public              # add ",public" to what's already there
+TS_SHARE_AUTHKEY=tskey-auth-...              # the new key
+TS_SHARE_HOSTNAME=drexler-share              # public address: https://drexler-share.<tailnet>.ts.net
+PUBLIC_SHARE_URL=https://drexler-share.<tailnet>.ts.net   # what "Copy link" gives people
+```
+Then run `ssh <nas-admin>@<nas> <app-dir>/qnap-compose.sh up -d`. This starts the share-only service and the public Tailscale machine, and restarts the app so it uses the public address for links.
+
+**4. Finish**
+- On the **Machines** page, the new machine (e.g. `drexler-share`) appears with a **Funnel** badge. Open its **⋯** menu → **Disable key expiry**, then remove `TS_SHARE_AUTHKEY` from `.env`.
+- Test: create a share link in an album, then open it on a phone with **Wi-Fi off and Tailscale off**. It should load. The main app address should **not** load that way.
+- Links created earlier now show the public address too; there's no need to re-send anything.
+
+Notes: Tailscale limits Funnel bandwidth (fine for family albums, not for streaming lots of 4K video to many people at once). The address ends in `.ts.net`. Revoke a link any time in the album's **Share** dialog; to turn public access off completely, remove `public` from `COMPOSE_PROFILES` and run `qnap-compose.sh up -d --remove-orphans`.
+
 ## Day-to-day
 
 - **Reviewing.** Use **Overview → Start reviewing**. Keyboard shortcuts: `1`–`9` select a copy, `K` keep, `D` delete, `Enter` save and go to the next group, `S` skip, `Z` zoom, `?` show help.
 - **Viewing.** Click any photo or video (Browse, Map, Approvals, Quarantine), or press `V` / double-click in Review, to open the full-screen viewer: `←` `→` browse, `+` `−` `0` zoom (or mouse wheel / double-click, drag to pan), `F` full screen, `I` info, `L` Live Photo motion, `Esc` close. Nothing is downloaded unless you press **Download**.
+- **Uploading from a device.** **Upload** in the sidebar (or **⬆ Upload** in Browse). On a PC, drag files in or click to choose; on a phone or tablet, the photo library opens. Files go to `<your folder>/Uploads/<year-month>/` (month the photo was taken), are processed within seconds, and anything already on the NAS byte-for-byte is skipped with a note of where it is. Uploads resume automatically after connection drops. On iPhone/iPad, tap **Options → Location** in the picker to keep GPS; Live Photos arrive as stills (use QNAP Qfile auto-upload for full-fidelity phone backups). Users need a folder set by an admin before they can upload.
 - **Albums.** In Browse click **Select** (shift-click for ranges), then **Add to album**; or press `A` in the viewer. Open an album to drag photos into order, set the cover, rename, or **Share**: with other app users (can view / can edit) or as a public link (expiry, optional password, downloads on or off; revoke any time). Deleting an album never deletes photos.
 - **Approvals.** Every deletion needs the **file owner's** approval (the **Approvals** page shows a red badge). Files outside every user's folder are "unassigned", and anyone can approve them.
 - **Quarantine.** Approved files stay restorable for 30 days by default. **Purge eligible** removes them for good. Auto-purge is off unless you enable it in Settings.

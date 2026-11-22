@@ -14,6 +14,7 @@ import SettingsPage from "./pages/Settings";
 import Albums from "./pages/Albums";
 import AlbumPage from "./pages/AlbumPage";
 import PublicAlbum from "./pages/PublicAlbum";
+import Upload from "./pages/Upload";
 
 export default function App() {
   const location = useLocation();
@@ -54,6 +55,7 @@ function Shell({ me }: { me: Me }) {
     { to: "/review", label: "Review", icon: Icons.review },
     { to: "/pending", label: "Approvals", icon: Icons.pending, badge: pending.data?.count },
     { to: "/quarantine", label: "Quarantine", icon: Icons.quarantine },
+    { to: "/upload", label: "Upload", icon: Icons.upload },
     { to: "/browse", label: "Browse", icon: Icons.browse },
     { to: "/albums", label: "Albums", icon: Icons.albums },
     ...(cfg.map_tile_url ? [{ to: "/map", label: "Map", icon: Icons.map }] : []),
@@ -97,6 +99,7 @@ function Shell({ me }: { me: Me }) {
           <Route path="/review" element={<Review me={me} />} />
           <Route path="/pending" element={<Pending me={me} />} />
           <Route path="/quarantine" element={<Quarantine />} />
+          <Route path="/upload" element={<Upload />} />
           <Route path="/browse" element={<Browse />} />
           <Route path="/albums" element={<Albums />} />
           <Route path="/albums/:id" element={<AlbumPage me={me} />} />

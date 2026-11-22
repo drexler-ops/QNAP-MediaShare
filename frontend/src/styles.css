@@ -503,3 +503,19 @@ table.tbl { width: 100%; border-collapse: collapse; }
   .public-page { padding: 16px 12px 40px; }
   .public-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px; }
 }
+
+/* ---------- upload ---------- */
+.dropzone {
+  display: grid; justify-items: center; gap: 6px; text-align: center; cursor: pointer;
+  padding: 36px 20px; border: 2px dashed var(--border); border-radius: var(--radius); background: var(--surface);
+  transition: border-color 0.15s, background 0.15s;
+}
+.dropzone:hover, .dropzone:focus-visible, .dropzone.over { border-color: var(--accent); background: var(--accent-soft); outline: none; }
+.dropzone-icon { font-size: 30px; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.upload-list { display: grid; }
+.upload-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.upload-row:last-child { border-bottom: 0; }
+.upload-row.duplicate, .upload-row.saved { opacity: 0.85; }
+.upload-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upload-row code { word-break: break-all; }
+@media (max-width: 600px) { .dropzone { padding: 28px 12px; } .upload-row { flex-wrap: wrap; } }

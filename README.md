@@ -15,6 +15,7 @@ A self-hosted web app for a shared NAS media library (built and tested for QNAP,
 - **Suggests a keeper.** The score favours EXIF richness and GPS first, then resolution, then original format (HEIC/RAW/MOV over JPG; copies named like messaging-app files are penalised). The UI explains the choice and warns when a decision would delete the only copy with GPS, EXIF, a capture date, Live Photo motion or the highest resolution.
 - **Deletion workflow.** A person marks files, the **owner** approves, and the file moves to the quarantine folder (`QUARANTINE_DIRNAME`) on the same volume. From there it can be restored, or purged after N days. The server refuses to delete the last copy in a group. Every action goes in the audit log.
 - **In-app media viewer.** Full screen: photos at full resolution (HEIC/TIFF/RAW converted once on the server), zoom/pan, videos played in-browser (HEVC transcoded on demand), Live Photo motion, filmstrip and ← → through the current list, metadata panel. Originals are only downloaded through an explicit **Download** button.
+- **Upload from devices.** PC drag-and-drop or phone/tablet photo picker; resumable 8 MB chunks; saved to `<user folder>/Uploads/<YYYY-MM>/` by capture month; exact duplicates skipped; processed immediately.
 - **Albums and sharing.** Hand-picked albums (select in Browse, or press `A` in the viewer), drag to reorder, cover photo. Albums can be private, shared with other users (view or edit), or shared publicly with a link (optional expiry, password, per-link downloads incl. ZIP; revocable). Public links are served by a separate share-only container that exposes nothing else. If a photo in an album is approved for deletion as a duplicate, the album switches to the kept copy.
 - **Other pages:** Browse (filters for owner, date, camera, EXIF, GPS, Live Photos), Map (Leaflet clusters), Settings (thresholds, keeper weights, users and folders (admin), scan schedule, system status).
 - **v2 (not built yet):** face recognition. The schema already has `people`/`faces` placeholders.
@@ -39,6 +40,11 @@ Everything deployment-specific is an environment variable in `.env` (template: [
 | `MAP_ATTRIBUTION` | `© OpenStreetMap contributors` | Attribution shown on the map |
 | `TZ` | `UTC` | Container timezone (schedules, logs) |
 | `DB_PUBLISH_PORT` | `5432` | Database port exposed on the LAN (for the helper-PC worker) |
+| `COMPOSE_PROFILES` | — | `remote` (family access via Tailscale), `public` (share-only service + Funnel), or `remote,public` |
+| `TS_AUTHKEY`, `TS_HOSTNAME` | —, `photo-audit` | Tailscale machine for private app access (key only needed for first start) |
+| `TS_SHARE_AUTHKEY`, `TS_SHARE_HOSTNAME` | —, `photo-share` | Tailscale Funnel machine for public share links |
+| `PUBLIC_SHARE_URL` | same as app | Public base address shown when copying share links |
+| `MAX_UPLOAD_MB` | `20480` | Largest single upload |
 | `DB_SHARED_BUFFERS`, `DB_MEM_LIMIT`, `API_MEM_LIMIT`, `WORKER_MEM_LIMIT` | `512MB`, `1g`, `768m`, `2g` | Resource tuning |
 
 Helper-PC worker ([.env.pc-worker.example](.env.pc-worker.example)): `NAS_IP`, `DB_PORT`, `DB_PASSWORD`, `SMB_LIBRARY_SHARE`, `SMB_THUMBS_PATH`, `SMB_USER`, `SMB_PASSWORD`, `SMB_VERSION`, `QUARANTINE_DIRNAME`, `PC_WORKER_CONCURRENCY`.

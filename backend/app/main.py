@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from .api import admin, albums, auth_routes, decisions, groups, items, media, public, users
+from .api import admin, albums, auth_routes, decisions, groups, items, media, public, uploads, users
 from .albums import AlbumError
 from .config import config
 from .deletion.workflow import WorkflowError
@@ -76,7 +76,7 @@ def create_app(share_only: bool | None = None) -> FastAPI:
     async def album_error(_req: Request, exc: AlbumError):
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
-    modules = (public,) if share_only else (auth_routes, users, items, media, groups, decisions, admin, albums, public)
+    modules = (public,) if share_only else (auth_routes, users, items, media, groups, decisions, admin, albums, uploads, public)
     for module in modules:
         app.include_router(module.router)
 
