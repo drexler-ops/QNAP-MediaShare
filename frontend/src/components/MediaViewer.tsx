@@ -127,7 +127,15 @@ function MediaViewer({
   const canFullscreen = typeof document !== "undefined" && !!document.fullscreenEnabled;
   const zoom = useRef<ZoomApi | null>(null);
   const root = useRef<HTMLDivElement>(null);
-  const swipe = useRef<{ x: number; y: number; id: number; t: number; bottom: boolean } | null>(null);
+  const swipe = useRef<{
+    x: number; y: number; id: number; bottom: boolean;
+    axis: "h" | "v" | null; lx: number; lt: number; vx: number;
+  } | null>(null);
+  // Carousel: after a horizontal swipe the track glides to the neighbour (or back), then the index changes.
+  const [settle, setSettle] = useState<{ dir: -1 | 0 | 1 } | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const settleTimer = useRef<number | undefined>(undefined);
+  const GAP = 16;
   const many = entries.length > 1;
   const stripOn = many && (!touch || stripPref);
   const download = f && f.status !== "purged" ? urls.download(f.id) : null;
@@ -237,7 +245,8 @@ function MediaViewer({
     // Gestures that start near the bottom edge control the filmstrip instead of closing.
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const bottom = touch && many && e.clientY > r.bottom - Math.max(110, r.height * 0.22);
-    swipe.current = { x: e.clientX, y: e.clientY, id: e.pointerId, t: Date.now(), bottom };
+    if (settle) return; // still gliding from the last swipe
+    swipe.current = { x: e.clientX, y: e.clientY, id: e.pointerId, bottom, axis: null, lx: e.clientX, lt: performance.now(), vx: 0 };
   };
   const releaseFinger = (e: React.PointerEvent) => {
     fingers.current.delete(e.pointerId);
@@ -248,22 +257,54 @@ function MediaViewer({
     if (!s || s.id !== e.pointerId || multiTouch.current) return;
     const dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
-    if (Math.abs(dx) > 8 || Math.abs(dy) > 8)
-      setDrag({ dx: Math.abs(dx) > Math.abs(dy) ? dx : 0, dy: !s.bottom && dy > 0 && dy > Math.abs(dx) ? dy : 0 });
+    // Lock to one direction once the finger has clearly moved, like native photo apps.
+    if (!s.axis && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) s.axis = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+    const now = performance.now();
+    const dt = now - s.lt;
+    if (dt > 0) s.vx = 0.7 * ((e.clientX - s.lx) / dt) + 0.3 * s.vx; // px/ms, smoothed
+    s.lx = e.clientX;
+    s.lt = now;
+    if (s.axis === "h") {
+      // Rubber-band past the first/last item.
+      const edge = (dx > 0 && index === 0) || (dx < 0 && index === entries.length - 1);
+      setDrag({ dx: edge ? dx * 0.3 : dx, dy: 0 });
+    } else if (s.axis === "v") setDrag({ dx: 0, dy: !s.bottom && dy > 0 ? dy : 0 });
   };
+  const finishSettle = useCallback(
+    (dir: -1 | 0 | 1) => {
+      window.clearTimeout(settleTimer.current);
+      if (dir) go(dir);
+      setSettle(null);
+      setDrag(null);
+    },
+    [go],
+  );
+  useEffect(() => () => window.clearTimeout(settleTimer.current), []);
   const onStageUp = (e: React.PointerEvent) => {
     const wasMulti = multiTouch.current;
     if (e.pointerType === "touch") releaseFinger(e);
     const s = swipe.current;
     swipe.current = null;
-    setDrag(null);
-    if (!s || s.id !== e.pointerId || wasMulti) return;
+    if (!s || s.id !== e.pointerId || wasMulti) {
+      if (!settle) setDrag(null);
+      return;
+    }
     const dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
-    const fast = Date.now() - s.t < 600;
-    const vertical = Math.abs(dy) > Math.abs(dx) * 1.3;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.3 && fast) go(dx < 0 ? 1 : -1);
-    else if (s.bottom && vertical && dy < -40) {
+    if (s.axis === "h") {
+      const w = stageRef.current?.clientWidth ?? window.innerWidth;
+      const want: -1 | 1 = dx < 0 ? 1 : -1;
+      const flick = Math.abs(s.vx) > 0.35 && Math.sign(s.vx) === Math.sign(dx);
+      const far = Math.abs(dx) > w * 0.25 && !(Math.abs(s.vx) > 0.2 && Math.sign(s.vx) !== Math.sign(dx));
+      const exists = index + want >= 0 && index + want < entries.length;
+      const dir: -1 | 0 | 1 = exists && Math.abs(dx) > 20 && (flick || far) ? want : 0;
+      setSettle({ dir });
+      settleTimer.current = window.setTimeout(() => finishSettle(dir), 400); // in case transitionend is missed
+      return;
+    }
+    setDrag(null);
+    const vertical = s.axis === "v";
+    if (s.bottom && vertical && dy < -40) {
       setStrip(true);
       setChrome(true);
     } else if (s.bottom && vertical && dy > 40) setStrip(false);
@@ -304,6 +345,19 @@ function MediaViewer({
   };
 
   const faces = showFaces && f?.kind === "image" && !live ? facesQ.data ?? [] : [];
+
+  const trackStyle: React.CSSProperties | undefined = settle
+    ? {
+        transform: `translate3d(${settle.dir ? -settle.dir * ((stageRef.current?.clientWidth ?? window.innerWidth) + GAP) : 0}px, 0, 0)`,
+        transition: "transform 280ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+      }
+    : drag
+      ? {
+          transform: `translate3d(${drag.dx}px, ${drag.dy * 0.6}px, 0)`,
+          opacity: drag.dy ? Math.max(0.4, 1 - drag.dy / 400) : 1,
+          transition: "none",
+        }
+      : undefined;
 
   return (
     <div
@@ -378,10 +432,17 @@ function MediaViewer({
         onPointerCancel={(e) => {
           if (e.pointerType === "touch") releaseFinger(e);
           swipe.current = null;
-          setDrag(null);
+          if (!settle) setDrag(null);
         }}
-        style={drag ? { transform: `translate(${drag.dx * 0.6}px, ${drag.dy * 0.6}px)`, opacity: drag.dy ? Math.max(0.4, 1 - drag.dy / 400) : 1 } : undefined}
+        ref={stageRef}
       >
+        <div
+          className="viewer-track"
+          style={trackStyle}
+          onTransitionEnd={(e) => {
+            if (e.target === e.currentTarget && settle) finishSettle(settle.dir);
+          }}
+        >
         {!f ? (
           <Spinner />
         ) : f.status === "purged" ? (
@@ -401,6 +462,13 @@ function MediaViewer({
             onZoomChange={setZoomed}
           />
         )}
+        {touch && many && (drag?.dx || settle) ? (
+          <>
+            <Peek entry={entries[index - 1]} side="prev" gap={GAP} />
+            <Peek entry={entries[index + 1]} side="next" gap={GAP} />
+          </>
+        ) : null}
+        </div>
         {many && index > 0 && (
           <button className="viewer-nav prev hide-touch" onClick={() => go(-1)} aria-label="Previous (←)">
             ‹
@@ -424,6 +492,21 @@ function MediaViewer({
       )}
       {picker && it && <AlbumPicker itemIds={[it.id]} onClose={() => setPicker(false)} z={3500} />}
     </div>
+  );
+}
+
+/** The neighbouring photo, shown beside the current one while swiping. */
+function Peek({ entry, side, gap }: { entry?: ViewerEntry; side: "prev" | "next"; gap: number }) {
+  const urls = useMediaUrls();
+  if (!entry?.file) return null;
+  return (
+    <img
+      className="viewer-peek"
+      style={side === "prev" ? { left: `calc(-100% - ${gap}px)` } : { left: `calc(100% + ${gap}px)` }}
+      src={urls.thumb(entry.file, "l")}
+      alt=""
+      draggable={false}
+    />
   );
 }
 
