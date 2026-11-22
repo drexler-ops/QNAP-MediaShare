@@ -85,6 +85,8 @@ def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
                 _process_video(f, full)
             f.process_state = "done"
             f.process_error = None
+            if f.face_state == "skip":
+                f.face_state = "pending"  # readable now (fixed/replaced): eligible for face detection again
             stats["done"] += 1
         except FileNotFoundError:
             f.status = "missing"
@@ -98,6 +100,7 @@ def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
                 msg = "Damaged or unsupported image file (the image data couldn't be read)"
             f.process_state = "error"
             f.process_error = msg[:1000]
+            f.face_state = "skip"  # no preview to detect faces on; don't count it as waiting
             stats["error"] += 1
         session.commit()
     return stats
