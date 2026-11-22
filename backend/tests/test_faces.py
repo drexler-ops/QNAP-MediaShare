@@ -173,3 +173,48 @@ def test_enabling_faces_queues_a_scan(session, users):
         login(c, "Alex")
         c.put("/api/admin/settings", json={"faces_enabled": True})
         assert session.scalar(select(Job).where(Job.type == "faces_scan")) is not None
+
+
+def test_regroup_keeps_unnamed_group_ids(session, users):
+    files = [with_preview(session, users, f"Alex/s{i}.jpg") for i in range(8)]
+    session.commit()
+    run(session, files, {f.id: [("A", (10, 10, 90, 90)), ("B", (200, 50, 280, 130))] for f in files})
+    grouping.run_face_grouping(session)
+    ids = sorted(session.scalars(select(Person.id)))
+    assert len(ids) == 2
+    grouping.run_face_grouping(session)  # nothing changed: same groups, same ids
+    assert sorted(session.scalars(select(Person.id))) == ids
+
+    with TestClient(create_app()) as c:
+        login(c, "Alex")
+        assert c.patch(f"/api/people/{ids[0]}", json={"name": "Sue"}).status_code == 200
+    grouping.run_face_grouping(session)  # naming one group must not renumber the other
+    session.expire_all()
+    assert sorted(session.scalars(select(Person.id))) == ids
+    assert session.get(Person, ids[0]).name == "Sue"
+
+
+def test_edit_during_regroup_is_never_overwritten(session, users, monkeypatch):
+    files = [with_preview(session, users, f"Alex/r{i}.jpg") for i in range(5)]
+    session.commit()
+    run(session, files, {f.id: [("A", (10, 10, 90, 90))] for f in files})
+    grouping.run_face_grouping(session)
+    pid = session.scalar(select(Person.id))
+
+    calls = {"n": 0}
+
+    def edit_while_computing(s):
+        # A user names the group after the regroup read the data but before it writes.
+        calls["n"] += 1
+        if calls["n"] == 1:
+            s.execute(Person.__table__.update().where(Person.id == pid).values(name="Sue"))
+            s.execute(Face.__table__.update().where(Face.person_id == pid).values(assignment="manual"))
+            s.commit()
+
+    monkeypatch.setattr(grouping, "faces_lock", edit_while_computing)
+    stats = grouping.run_face_grouping(session)
+    assert calls["n"] == 2 and "faces" in stats  # first attempt saw the change and recomputed
+    session.expire_all()
+    p = session.get(Person, pid)
+    assert p.name == "Sue"
+    assert all(f.assignment == "manual" and f.person_id == pid for f in session.scalars(select(Face)))

@@ -12,11 +12,12 @@ Rules:
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+import time
+from collections import Counter, defaultdict
 from typing import Any
 
 import numpy as np
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.orm import Session
 
 from ..models import Face, File, Person
@@ -79,66 +80,141 @@ def cluster(vecs: np.ndarray, threshold: float, min_size: int, chunk: int = 256)
     return sorted((g for g in groups.values() if len(g) >= min_size), key=len, reverse=True)
 
 
-def run_face_grouping(session: Session) -> dict[str, Any]:
+LOCK_KEY = 74_311_001  # pg advisory lock: user edits to faces/people vs. the regroup job's write phase
+
+
+def faces_lock(session: Session) -> None:
+    """Take the faces/people write lock until this transaction ends (Postgres; no-op on SQLite).
+
+    User edits take it before changing anything; the regroup job takes it only for its short write
+    phase, after checking nothing changed while it was computing. Edits never get overwritten.
+    """
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(text("select pg_advisory_xact_lock(:k)"), {"k": LOCK_KEY})
+
+
+def _user_state(session: Session, face_ids: list[int] | None = None) -> tuple[dict, dict]:
+    """What users decide: manual assignments, 'not this person' lists, names, hidden flags."""
+    q = select(Face.id, Face.assignment, Face.person_id, Face.rejected)
+    if face_ids is not None:
+        q = q.where(Face.id.in_(face_ids))
+    faces = {
+        fid: (pid if a == "manual" else None, a == "manual", tuple(sorted(rej or ())))
+        for fid, a, pid, rej in session.execute(q)
+    }
+    people = {pid: (name, hidden) for pid, name, hidden in session.execute(select(Person.id, Person.name, Person.hidden))}
+    return faces, people
+
+
+def run_face_grouping(session: Session, attempts: int = 5) -> dict[str, Any]:
+    for attempt in range(attempts):
+        stats = _group_once(session)
+        if stats is not None:
+            return stats
+        log.info("face grouping: names/faces changed while computing; recomputing (attempt %s)", attempt + 2)
+        time.sleep(0.5)
+    return {"skipped": "faces kept changing; the next regroup will catch up"}
+
+
+def _group_once(session: Session) -> dict[str, Any] | None:
     s = get_settings(session)
     auto_t, suggest_t = float(s["face_auto_threshold"]), float(s["face_suggest_threshold"])
     cluster_t, min_size = float(s["face_cluster_threshold"]), int(s["face_min_cluster"])
 
-    faces = list(
-        session.scalars(select(Face).join(File, File.id == Face.file_id).where(File.status.in_(LIVE)).order_by(Face.id))
-    )
-    vecs = vectors(faces)
-    person_ids, cents = centroids(faces, vecs)
-    named = {p.id for p in session.scalars(select(Person).where(Person.name.is_not(None)))}
+    # ---- 1. compute (no lock; plain rows, nothing written) ----
+    rows = session.execute(
+        select(Face.id, Face.vector, Face.quality, Face.assignment, Face.person_id, Face.rejected,
+               Face.similarity, Face.suggested_person_id)
+        .join(File, File.id == Face.file_id).where(File.status.in_(LIVE)).order_by(Face.id)
+    ).all()
+    before_faces, before_people = _user_state(session, [r.id for r in rows])
+    session.commit()  # end the read transaction; the write phase re-checks under the lock
 
-    # 1. Match non-manual faces against known people.
-    stats = {"faces": len(faces), "people": len(person_ids), "auto": 0, "suggested": 0, "clusters": 0}
+    n = len(rows)
+    vecs = np.stack([np.frombuffer(r.vector, dtype=np.float32) for r in rows]) if n else np.zeros((0, 512), np.float32)
+    manual: dict[int, list[int]] = defaultdict(list)
+    for i, r in enumerate(rows):
+        if r.assignment == "manual" and r.person_id is not None and r.person_id in before_people:
+            manual[r.person_id].append(i)
+    person_ids = sorted(manual)
+    cents = np.stack([vecs[manual[p]].mean(0) for p in person_ids]) if person_ids else np.zeros((0, 512), np.float32)
+    if person_ids:
+        cents /= np.linalg.norm(cents, axis=1, keepdims=True) + 1e-9
+    named = {pid for pid, (name, _) in before_people.items() if name}
+
+    stats = {"faces": n, "people": len(person_ids), "auto": 0, "suggested": 0, "clusters": 0}
+    new: dict[int, tuple] = {}  # row index -> (person_id, assignment, similarity, suggested_person_id)
     unassigned: list[int] = []
-    for i, f in enumerate(faces):
-        if f.assignment == "manual":
+    for i, r in enumerate(rows):
+        if r.assignment == "manual":
             continue
-        f.person_id, f.assignment, f.similarity, f.suggested_person_id = None, "none", None, None
-        if len(person_ids):
+        result = (None, "none", None, None)
+        if person_ids:
             sims = cents @ vecs[i]
-            for rejected in f.rejected or []:
-                if rejected in person_ids:
+            for rejected in r.rejected or []:
+                if rejected in manual:
                     sims[person_ids.index(rejected)] = -1.0
             best = int(np.argmax(sims))
             sim = float(sims[best])
-            need = auto_t + (0 if f.quality else LOW_QUALITY_MARGIN)
+            need = auto_t + (0 if r.quality else LOW_QUALITY_MARGIN)
             if sim >= need:
-                f.person_id, f.assignment, f.similarity = person_ids[best], "auto", round(sim, 4)
+                result = (person_ids[best], "auto", round(sim, 4), None)
                 stats["auto"] += 1
-                continue
-            if sim >= suggest_t and person_ids[best] in named:
-                f.suggested_person_id, f.similarity = person_ids[best], round(sim, 4)
+            elif sim >= suggest_t and person_ids[best] in named:
+                result = (None, "none", round(sim, 4), person_ids[best])
                 stats["suggested"] += 1
-        if f.quality and f.suggested_person_id is None:
+        new[i] = result
+        if r.quality and result[1] == "none" and result[3] is None:
             unassigned.append(i)
 
-    # 2. Rebuild automatic clusters (unnamed, unhidden people without manual faces are recreated each run).
-    keep = set(
-        session.scalars(select(Face.person_id).where(Face.assignment == "manual", Face.person_id.is_not(None)))
-    )
-    stale = [
-        p.id for p in session.scalars(select(Person).where(Person.name.is_(None), Person.hidden.is_(False)))
-        if p.id not in keep
-    ]
-    session.flush()
-    if stale:
-        session.execute(delete(Person).where(Person.id.in_(stale)))
-    for group in cluster(vecs[unassigned], cluster_t, min_size) if unassigned else []:
-        person = Person(name=None)
-        session.add(person)
-        session.flush()
-        for j in group:
-            f = faces[unassigned[j]]
-            f.person_id, f.assignment = person.id, "cluster"
+    # Unnamed, unhidden groups without confirmed faces are rebuilt each run, but keep their ids when
+    # the new group is mostly the same faces, so pages and links stay valid while people name groups.
+    confirmed = set(session.scalars(select(Face.person_id).where(Face.assignment == "manual", Face.person_id.is_not(None))))
+    session.commit()
+    reusable = {pid for pid, (name, hidden) in before_people.items() if not name and not hidden and pid not in confirmed}
+    groups = cluster(vecs[unassigned], cluster_t, min_size) if unassigned else []
+    planned: list[tuple[int | None, list[int]]] = []
+    for g in groups:  # largest first
+        members = [unassigned[j] for j in g]
+        votes = Counter(rows[i].person_id for i in members if rows[i].assignment == "cluster" and rows[i].person_id in reusable)
+        pid = votes.most_common(1)[0][0] if votes else None
+        if pid is not None:
+            reusable.discard(pid)
+        planned.append((pid, members))
+    stale = reusable  # old groups nobody inherited
+
+    # ---- 2. write (under the lock, only if nobody changed names/faces meanwhile) ----
+    faces_lock(session)
+    after_faces, after_people = _user_state(session, [r.id for r in rows])
+    if after_faces != before_faces or after_people != before_people:
+        session.rollback()
+        return None
+
+    for pid, members in planned:
+        if pid is None:
+            p = Person(name=None)
+            session.add(p)
+            session.flush()
+            pid = p.id
+        for i in members:
+            new[i] = (pid, "cluster", None, None)
         stats["clusters"] += 1
 
+    updates = []
+    for i, (pid, assignment, sim, sugg) in new.items():
+        r = rows[i]
+        if (r.person_id, r.assignment, r.similarity, r.suggested_person_id) != (pid, assignment, sim, sugg):
+            updates.append({"id": r.id, "person_id": pid, "assignment": assignment, "similarity": sim, "suggested_person_id": sugg})
+    if updates:
+        session.execute(update(Face), updates)
+    if stale:
+        # Faces added since step 1 never point at these (new faces start unassigned).
+        session.execute(update(Face).where(Face.person_id.in_(stale)).values(person_id=None, assignment="none"), execution_options={"synchronize_session": False})
+        session.execute(delete(Person).where(Person.id.in_(stale)))
     session.flush()
     refresh_covers(session)
     session.commit()
+    stats["changed"] = len(updates)
     log.info("face grouping: %s", stats)
     return stats
 

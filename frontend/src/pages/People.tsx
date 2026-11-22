@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, faceThumbUrl, type PeopleList, type PersonSummary } from "../api";
-import { Loading, useToast } from "../ui";
+import { Loading, Spinner, useToast } from "../ui";
 import { cls } from "../util";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -16,6 +16,7 @@ export default function People() {
     queryFn: () => api<PeopleList>(`/api/people${showHidden ? "?include_hidden=true" : ""}`),
     refetchInterval: (query) => {
       const s = query.state.data?.status;
+      if (s?.regrouping) return 3000; // names are saved; groups and counts are catching up
       return s && s.enabled && s.photos_done < s.photos_total ? 8000 : false;
     },
   });
@@ -33,10 +34,14 @@ export default function People() {
     mutationFn: ({ id, body }: { id: number; body: Record<string, unknown> }) =>
       api<{ id: number; merged: boolean }>(`/api/people/${id}`, { method: "PATCH", json: body }),
     onSuccess: (r, v) => {
-      if (v.body.name) toast(r.merged ? `Added to ${v.body.name}.` : `Named ${v.body.name}.`);
+      if (v.body.name) toast(r.merged ? `Added to ${v.body.name} (same name, so the groups were merged).` : `Named ${v.body.name}.`);
+      else if (v.body.hidden !== undefined) toast(v.body.hidden ? "Hidden. Show it again with \"Show hidden\"." : "Unhidden.");
       refresh();
     },
-    onError: (e) => toast(errMsg(e), true),
+    onError: (e) => {
+      toast(errMsg(e), true);
+      refresh(); // the list may be out of date
+    },
   });
 
   if (q.isLoading || !q.data) return <Loading />;
@@ -48,6 +53,11 @@ export default function People() {
       <div className="page-head">
         <h1>People</h1>
         <span className="muted">Faces found in everyone's photos. Name someone once and they're recognised from then on.</span>
+        {status.regrouping && (
+          <span className="updating" title="Names are saved. Matching faces to people in the background; counts update in a moment.">
+            <Spinner /> Updating groups…
+          </span>
+        )}
         <div className="spacer" />
         {review > 0 && <Link to="/people/review" className="btn primary">Review {review} suggestion{review === 1 ? "" : "s"}</Link>}
         <label className="check small">
@@ -107,6 +117,7 @@ export default function People() {
                   key={p.id}
                   person={p}
                   names={names.data ?? []}
+                  busy={patch.isPending && patch.variables?.id === p.id}
                   onName={(name) => patch.mutate({ id: p.id, body: { name } })}
                   onHide={() => patch.mutate({ id: p.id, body: { hidden: !p.hidden } })}
                 />
@@ -130,10 +141,12 @@ export function Avatar({ person, size = 112 }: { person: Pick<PersonSummary, "co
 
 function UnnamedCard({
   person,
+  busy,
   onName,
   onHide,
 }: {
   person: PersonSummary;
+  busy: boolean;
   names: { id: number; name: string }[];
   onName: (name: string) => void;
   onHide: () => void;
@@ -146,10 +159,10 @@ function UnnamedCard({
       </Link>
       <span className="small muted">{person.photos.toLocaleString()} photos</span>
       <form className="row" style={{ flexWrap: "nowrap", gap: 4 }} onSubmit={(e) => { e.preventDefault(); if (name.trim()) onName(name.trim()); }}>
-        <input type="text" list="people-names" placeholder="Name…" value={name} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} aria-label="Name this person" />
-        <button className="btn sm primary" disabled={!name.trim()} aria-label="Save name">✓</button>
+        <input type="text" list="people-names" placeholder="Name…" value={name} onChange={(e) => setName(e.target.value)} style={{ width: "100%" }} aria-label="Name this person" disabled={busy} />
+        <button className="btn sm primary" disabled={!name.trim() || busy} aria-label="Save name">{busy ? <Spinner /> : "✓"}</button>
       </form>
-      <button className="btn sm ghost" onClick={onHide}>{person.hidden ? "Unhide" : "Hide"}</button>
+      <button className="btn sm ghost" onClick={onHide} disabled={busy}>{person.hidden ? "Unhide" : "Hide"}</button>
     </div>
   );
 }

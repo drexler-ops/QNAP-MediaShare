@@ -279,12 +279,13 @@ export interface PeopleList {
   unnamed: PersonSummary[];
   unnamed_total: number;
   review: number;
-  status: { enabled: boolean; models_ready: boolean; photos_total: number; photos_done: number; faces: number };
+  status: { enabled: boolean; models_ready: boolean; photos_total: number; photos_done: number; faces: number; regrouping?: boolean };
 }
 
 export interface PersonDetail extends PersonSummary {
   face_list: { face_id: number; file_id: number; item_id: number; assignment: string; similarity: number | null }[];
   items: ItemInfo[];
+  regrouping?: boolean;
 }
 
 export interface ItemFace {

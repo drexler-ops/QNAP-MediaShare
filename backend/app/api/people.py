@@ -11,10 +11,10 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..audit import audit
 from ..faces.engine import models_ready
-from ..faces.grouping import person_counts, refresh_covers
+from ..faces.grouping import faces_lock, person_counts, refresh_covers
 from ..faces.pipeline import delete_face_thumb
 from ..jobs import enqueue
-from ..models import Face, File, Item, Person, User
+from ..models import Face, File, Item, Job, Person, User
 from ..scanner.thumbs import face_thumb_path
 from ..settings_store import get_settings
 from .deps import current_user, get_db
@@ -46,7 +46,7 @@ class FaceIds(BaseModel):
 def _person(db: Session, pid: int) -> Person:
     p = db.get(Person, pid)
     if p is None:
-        raise HTTPException(404, "Person not found")
+        raise HTTPException(404, "That group no longer exists (it was merged or regrouped). The list has been refreshed; please try again.")
     return p
 
 
@@ -79,6 +79,10 @@ def _merge(db: Session, src: Person, dst: Person, user: User) -> None:
     refresh_covers(db)
 
 
+def _regrouping(db: Session) -> bool:
+    return bool(db.scalar(select(func.count(Job.id)).where(Job.type == "face_group", Job.state.in_(("queued", "running")))))
+
+
 def _regroup(db: Session) -> None:
     enqueue(db, "face_group", unique=True, priority=3)
 
@@ -107,6 +111,8 @@ def list_people(include_hidden: bool = False, db: Session = Depends(get_db), _: 
             "photos_total": total,
             "photos_done": done,
             "faces": db.scalar(select(func.count(Face.id))) or 0,
+            # Background regroup pending: names are saved already, but groups/counts are still updating.
+            "regrouping": _regrouping(db),
         },
     }
 
@@ -152,11 +158,13 @@ def get_person(person_id: int, db: Session = Depends(get_db), _: User = Depends(
             for f, item_id in faces
         ],
         "items": [item_dict(items[i], names_) for i in item_ids if i in items],
+        "regrouping": _regrouping(db),
     }
 
 
 @router.patch("/people/{person_id}")
 def update_person(person_id: int, body: PersonPatch, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    faces_lock(db)  # wait for a regroup that is writing right now; it never overwrites edits
     p = _person(db, person_id)
     if body.name is not None:
         name = body.name.strip()
@@ -181,6 +189,7 @@ def update_person(person_id: int, body: PersonPatch, db: Session = Depends(get_d
 
 @router.post("/people/{person_id}/merge")
 def merge(person_id: int, body: MergeIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    faces_lock(db)  # wait for a regroup that is writing right now; it never overwrites edits
     src, dst = _person(db, person_id), _person(db, body.into)
     if src.id == dst.id:
         raise HTTPException(400, "Can't merge a person into themselves")
@@ -193,6 +202,7 @@ def merge(person_id: int, body: MergeIn, db: Session = Depends(get_db), user: Us
 
 @router.post("/faces/assign")
 def assign(body: AssignIn, db: Session = Depends(get_db), user: User = Depends(current_user)):
+    faces_lock(db)  # wait for a regroup that is writing right now; it never overwrites edits
     if body.person_id is None and not (body.name or "").strip():
         raise HTTPException(400, "Choose a person or type a name")
     if body.person_id is not None:
@@ -220,6 +230,7 @@ def assign(body: AssignIn, db: Session = Depends(get_db), user: User = Depends(c
 @router.post("/faces/confirm")
 def confirm(body: FaceIds, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """Accept the suggested person for these faces."""
+    faces_lock(db)  # wait for a regroup that is writing right now; it never overwrites edits
     n = 0
     for f in db.scalars(select(Face).where(Face.id.in_(body.face_ids), Face.suggested_person_id.is_not(None))):
         f.person_id, f.assignment, f.suggested_person_id = f.suggested_person_id, "manual", None
@@ -232,6 +243,7 @@ def confirm(body: FaceIds, db: Session = Depends(get_db), user: User = Depends(c
 @router.post("/faces/unassign")
 def unassign(body: FaceIds, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """'Not this person': remove and remember, so it's never auto-assigned to them again."""
+    faces_lock(db)  # wait for a regroup that is writing right now; it never overwrites edits
     n = 0
     for f in db.scalars(select(Face).where(Face.id.in_(body.face_ids))):
         wrong = f.person_id or f.suggested_person_id
@@ -249,6 +261,7 @@ def unassign(body: FaceIds, db: Session = Depends(get_db), user: User = Depends(
 @router.post("/faces/ignore")
 def ignore(body: FaceIds, db: Session = Depends(get_db), user: User = Depends(current_user)):
     """'Not a face' (a pattern, a statue, a poster): delete the detection."""
+    faces_lock(db)  # wait for a regroup that is writing right now; it never overwrites edits
     faces = list(db.scalars(select(Face).where(Face.id.in_(body.face_ids))))
     for f in faces:
         delete_face_thumb(f.id)

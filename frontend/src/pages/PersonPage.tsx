@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, faceThumbUrl, post, type PersonDetail } from "../api";
 import { useViewer } from "../components/MediaViewer";
-import { Loading, Thumb, useToast } from "../ui";
+import { Loading, Spinner, Thumb, useToast } from "../ui";
 import { cls } from "../util";
 import { Avatar } from "./People";
 
@@ -16,7 +16,12 @@ export default function PersonPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const viewer = useViewer();
-  const q = useQuery({ queryKey: ["person", pid], queryFn: () => api<PersonDetail>(`/api/people/${pid}`), retry: false });
+  const q = useQuery({
+    queryKey: ["person", pid],
+    queryFn: () => api<PersonDetail>(`/api/people/${pid}`),
+    retry: false,
+    refetchInterval: (query) => (query.state.data?.regrouping ? 3000 : false), // counts catch up after a change
+  });
   const names = useQuery({ queryKey: ["people-names"], queryFn: () => api<{ id: number; name: string }[]>("/api/people/names") });
   const [tab, setTab] = useState<"photos" | "faces">("photos");
   const [editing, setEditing] = useState(false);
@@ -33,25 +38,50 @@ export default function PersonPage() {
   };
   const patch = useMutation({
     mutationFn: (body: Record<string, unknown>) => api<{ id: number; merged: boolean }>(`/api/people/${pid}`, { method: "PATCH", json: body }),
-    onSuccess: (r) => {
+    onSuccess: (r, body) => {
       setEditing(false);
       if (r.merged) {
-        toast("Merged with the existing person of that name.");
+        toast(`Added to ${body.name} (same name, so the groups were merged).`);
         navigate(`/people/${r.id}`, { replace: true });
-      }
+      } else if (body.name) toast(q.data?.name ? `Renamed to ${body.name}.` : `Named ${body.name}.`);
+      else if (body.hidden !== undefined) toast(body.hidden ? "Hidden from People." : "Unhidden.");
       refresh();
     },
-    onError: (e) => toast(errMsg(e), true),
+    onError: (e) => {
+      toast(errMsg(e), true);
+      refresh();
+    },
   });
   const merge = useMutation({
     mutationFn: (into: number) => post<{ id: number }>(`/api/people/${pid}/merge`, { into }),
-    onSuccess: (r) => { toast("Merged."); refresh(); navigate(`/people/${r.id}`, { replace: true }); },
-    onError: (e) => toast(errMsg(e), true),
+    onSuccess: (r) => {
+      const into = names.data?.find((n) => n.id === r.id)?.name;
+      toast(into ? `Merged into ${into}.` : "Merged.");
+      setMergeInto("");
+      refresh();
+      navigate(`/people/${r.id}`, { replace: true });
+    },
+    onError: (e) => {
+      toast(errMsg(e), true);
+      refresh();
+    },
   });
   const faceAction = useMutation({
     mutationFn: ({ path, body }: { path: string; body: unknown }) => post<Record<string, number>>(path, body),
-    onSuccess: () => { toast("Updated. Everyone's photos will be re-checked in the background."); refresh(); },
-    onError: (e) => toast(errMsg(e), true),
+    onSuccess: (_r, v) => {
+      const n = (v.body as { face_ids: number[] }).face_ids.length;
+      const faces = `${n} face${n === 1 ? "" : "s"}`;
+      if (v.path.endsWith("/assign")) toast(`Moved ${faces} to ${moveTo.trim()}.`);
+      else if (v.path.endsWith("/unassign")) toast(`Removed ${faces}. They won't be matched to ${q.data?.name ?? "this person"} again.`);
+      else if (v.path.endsWith("/ignore")) toast(`Removed ${faces} (not a face).`);
+      else toast("Updated.");
+      if (v.path.endsWith("/assign")) setMoveTo("");
+      refresh();
+    },
+    onError: (e) => {
+      toast(errMsg(e), true);
+      refresh();
+    },
   });
 
   if (q.isLoading) return <Loading />;
@@ -82,14 +112,17 @@ export default function PersonPage() {
           <div className="small muted"><Link to="/people">People</Link> ›</div>
           {editing ? (
             <form className="row" onSubmit={(e) => { e.preventDefault(); if (name.trim()) patch.mutate({ name: name.trim() }); }}>
-              <input type="text" list="person-names" value={name} onChange={(e) => setName(e.target.value)} autoFocus aria-label="Name" />
-              <button className="btn primary sm" disabled={!name.trim()}>Save</button>
+              <input type="text" list="person-names" value={name} onChange={(e) => setName(e.target.value)} autoFocus aria-label="Name" disabled={patch.isPending} />
+              <button className="btn primary sm" disabled={!name.trim() || patch.isPending}>{patch.isPending ? <><Spinner /> Saving…</> : "Save"}</button>
               <button type="button" className="btn sm" onClick={() => setEditing(false)}>Cancel</button>
             </form>
           ) : (
             <h1>{label}{p.hidden && <span className="badge" style={{ marginLeft: 8 }}>hidden</span>}</h1>
           )}
-          <div className="small faint">{p.photos.toLocaleString()} photos · {p.faces.toLocaleString()} faces</div>
+          <div className="small faint">
+            {p.photos.toLocaleString()} photos · {p.faces.toLocaleString()} faces
+            {p.regrouping && <span className="updating" style={{ marginLeft: 10 }}><Spinner /> Updating…</span>}
+          </div>
         </div>
         {!editing && (
           <div className="row">
@@ -98,8 +131,8 @@ export default function PersonPage() {
               <option value="">Merge into…</option>
               {names.data?.filter((n) => n.id !== p.id).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
             </select>
-            {mergeInto && <button className="btn primary" onClick={() => merge.mutate(Number(mergeInto))}>Merge</button>}
-            <button className="btn ghost" onClick={() => patch.mutate({ hidden: !p.hidden })}>{p.hidden ? "Unhide" : "Hide"}</button>
+            {mergeInto && <button className="btn primary" disabled={merge.isPending} onClick={() => merge.mutate(Number(mergeInto))}>{merge.isPending ? "Merging…" : "Merge"}</button>}
+            <button className="btn ghost" disabled={patch.isPending} onClick={() => patch.mutate({ hidden: !p.hidden })}>{p.hidden ? "Unhide" : "Hide"}</button>
           </div>
         )}
       </div>

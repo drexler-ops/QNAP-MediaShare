@@ -785,28 +785,29 @@ function FaceTagger({ face, itemId, onDone }: { face: ItemFace; itemId: number; 
     qc.invalidateQueries({ queryKey: ["person"] });
   };
   const act = useMutation({
-    mutationFn: ({ path, body }: { path: string; body: unknown }) => post(path, body),
-    onSuccess: () => {
+    mutationFn: ({ path, body }: { path: string; body: unknown; done: string }) => post(path, body),
+    onSuccess: (_r, v) => {
+      toast(v.done);
       refresh();
       onDone();
     },
     onError: (e) => toast(String(e instanceof Error ? e.message : e), true),
   });
   const ids = { face_ids: [face.face_id] };
-  const assign = (n: string) => n.trim() && act.mutate({ path: "/api/faces/assign", body: { ...ids, name: n.trim() } });
+  const assign = (n: string) => n.trim() && act.mutate({ path: "/api/faces/assign", body: { ...ids, name: n.trim() }, done: `Tagged as ${n.trim()}.` });
 
   return (
     <div className="face-tagger" onPointerDown={(e) => e.stopPropagation()} role="dialog" aria-label="Name this face">
       {face.name ? (
         <div className="row" style={{ marginBottom: 8 }}>
           <strong className="grow">{face.name}</strong>
-          <button className="vbtn" onClick={() => act.mutate({ path: "/api/faces/unassign", body: ids })}>Not {face.name}</button>
+          <button className="vbtn" disabled={act.isPending} onClick={() => act.mutate({ path: "/api/faces/unassign", body: ids, done: `Got it: not ${face.name}.` })}>Not {face.name}</button>
         </div>
       ) : face.suggested_name ? (
         <div className="row" style={{ marginBottom: 8 }}>
           <span className="grow">Is this <strong>{face.suggested_name}</strong>?</span>
-          <button className="vbtn on" onClick={() => act.mutate({ path: "/api/faces/confirm", body: ids })}>Yes</button>
-          <button className="vbtn" onClick={() => act.mutate({ path: "/api/faces/unassign", body: ids })}>No</button>
+          <button className="vbtn on" disabled={act.isPending} onClick={() => act.mutate({ path: "/api/faces/confirm", body: ids, done: `Confirmed: ${face.suggested_name}.` })}>Yes</button>
+          <button className="vbtn" disabled={act.isPending} onClick={() => act.mutate({ path: "/api/faces/unassign", body: ids, done: `Got it: not ${face.suggested_name}.` })}>No</button>
         </div>
       ) : null}
       <form className="row" style={{ flexWrap: "nowrap" }} onSubmit={(e) => { e.preventDefault(); assign(name); }}>
@@ -823,10 +824,10 @@ function FaceTagger({ face, itemId, onDone }: { face: ItemFace; itemId: number; 
         <datalist id="face-names">
           {names.data?.map((p) => <option key={p.id} value={p.name} />)}
         </datalist>
-        <button className="vbtn on" disabled={!name.trim() || act.isPending}>Save</button>
+        <button className="vbtn on" disabled={!name.trim() || act.isPending}>{act.isPending ? "Saving…" : "Save"}</button>
       </form>
       <div className="row" style={{ marginTop: 8, justifyContent: "space-between" }}>
-        <button className="vbtn" onClick={() => act.mutate({ path: "/api/faces/ignore", body: ids })} title="Remove this detection">Not a face</button>
+        <button className="vbtn" disabled={act.isPending} onClick={() => act.mutate({ path: "/api/faces/ignore", body: ids, done: "Removed (not a face)." })} title="Remove this detection">Not a face</button>
         <button className="vbtn" onClick={onDone}>Cancel</button>
       </div>
     </div>
