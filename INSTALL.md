@@ -86,16 +86,21 @@ If you'd rather not copy files by hand or work in an SSH shell, any computer wit
    ```
    > If the password is refused: in **Control Panel → Network & File Services → Telnet / SSH → Edit Access Permission**, make sure the account is allowed to use SSH. If key login stops working after a NAS reboot, enable home folders under **Control Panel → Users → Advanced Settings** and repeat this step.
 2. **Configuration file:** create `.env.live` next to `docker-compose.yml` on your computer (copy `.env.example`). The paths in it are **paths on the NAS** (e.g. `/share/Multimedia`). It is gitignored; keep it safe, because it holds the secrets.
-3. **Deploy.** From the repository folder (Git Bash or PowerShell). This is also the update procedure after a `git pull`:
+3. **Deploy.** From the repository folder, in **Git Bash** (installed with Git for Windows). This is also the update procedure after a `git pull`. Each release is unpacked into a fresh folder and swapped in, so files deleted from the repository don't linger on the NAS. The previous release is kept as `app.prev`.
    ```sh
-   git archive --format=tar HEAD | ssh <nas-admin>@<nas> "tar -x -C /share/Container/photo-audit/app"
-   scp .env.live <nas-admin>@<nas>:/share/Container/photo-audit/app/.env
-   ssh <nas-admin>@<nas> "chmod 600 /share/Container/photo-audit/app/.env; chmod +x /share/Container/photo-audit/app/qnap-compose.sh"
-   ssh <nas-admin>@<nas> "/share/Container/photo-audit/app/qnap-compose.sh up -d --build"
+   NAS=<nas-admin>@<nas>
+   B=/share/Container/photo-audit
+   # first deploy only: put the config in place
+   ssh $NAS "mkdir -p $B/app" && scp .env.live $NAS:$B/app/.env
+
+   git archive --format=tar HEAD | ssh $NAS "set -e; rm -rf $B/app.new; mkdir $B/app.new; tar -x -C $B/app.new;      cp -p $B/app/.env $B/app.new/.env; chmod 600 $B/app.new/.env; chmod +x $B/app.new/qnap-compose.sh;      rm -rf $B/app.prev; [ -d $B/app ] && mv $B/app $B/app.prev; mv $B/app.new $B/app"
+   ssh $NAS "$B/app/qnap-compose.sh up -d --build"
    ```
-   The build runs on the NAS (5–15 minutes the first time). Get the admin password with
-   `ssh <nas-admin>@<nas> "/share/Container/photo-audit/app/qnap-compose.sh logs api" | findstr password:`
-   (`grep password:` in Git Bash), then continue with step A9.
+   The build runs on the NAS (5–15 minutes the first time, about 1–3 minutes for updates). The running app keeps serving until the new build succeeds, and a failed build leaves it untouched. The database lives in a Docker volume and is never affected by swapping folders.
+   On the first deploy, get the admin password with
+   `ssh $NAS "$B/app/qnap-compose.sh logs api" | grep password:`, then continue with step A9.
+
+   **Rollback** to the previous release: `ssh $NAS "set -e; mv $B/app $B/app.bad; mv $B/app.prev $B/app; $B/app/qnap-compose.sh up -d --build"`.
 
 **Managing Live afterwards** uses the same wrapper, which finds Container Station's docker and gives it a writable config folder:
 ```sh
@@ -187,7 +192,7 @@ This PC runs a second worker to help with the first index of a large library. It
 
 ## Updating the app
 
-Copy the new project files over `<app-dir>` and keep your `.env`. Then run:
+Over SSH from another computer: repeat step 3 of "Alternative to steps A6–A8: deploy from another computer over SSH" (it swaps in a clean copy and keeps `.env`). Manually: replace the contents of `<app-dir>` with the new release, delete files that no longer exist in it, and keep your `.env`. Then run:
 ```sh
 cd <app-dir> && docker compose up -d --build
 ```
