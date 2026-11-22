@@ -103,4 +103,8 @@ def write_settings(body: dict[str, Any], db: Session = Depends(get_db), user: Us
     changed = {k: {"from": before[k], "to": after[k]} for k in body if before.get(k) != after.get(k)}
     if changed:
         audit(db, user.id, "update_settings", **changed)
+    if changed.get("faces_enabled", {}).get("to") is True:
+        enqueue(db, "faces_scan", unique=True)
+    elif any(k.startswith("face_") for k in changed):
+        enqueue(db, "face_group", unique=True)
     return after

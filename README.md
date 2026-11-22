@@ -15,6 +15,8 @@ A self-hosted web app for a shared NAS media library (built and tested for QNAP,
 - **Suggests a keeper.** The score favours EXIF richness and GPS first, then resolution, then original format (HEIC/RAW/MOV over JPG; copies named like messaging-app files are penalised). The UI explains the choice and warns when a decision would delete the only copy with GPS, EXIF, a capture date, Live Photo motion or the highest resolution.
 - **Deletion workflow.** A person marks files, the **owner** approves, and the file moves to the quarantine folder (`QUARANTINE_DIRNAME`) on the same volume. From there it can be restored, or purged after N days. The server refuses to delete the last copy in a group. Every action goes in the audit log.
 - **In-app media viewer.** Full screen: photos at full resolution (HEIC/TIFF/RAW converted once on the server), zoom/pan, videos played in-browser (HEVC transcoded on demand), Live Photo motion, filmstrip and ← → through the current list, metadata panel. Originals are only downloaded through an explicit **Download** button.
+- **People (face recognition).** Optional, runs entirely on the NAS (InsightFace buffalo_l via ONNX Runtime; models downloaded on first use, non-commercial license). Faces are grouped automatically; name a group once and new photos are recognised; uncertain matches go to a quick Yes/No review; "Not this person" is remembered. Faces can be shown and tagged in the viewer, and Browse/Map filter by one or more people. Public share pages never expose names.
+- **Phones and tablets.** Slide-out menu below 1024 px (☰ or swipe from the left edge), viewer gestures (double-tap zoom, swipe for next/previous, swipe down to close), long-press to select, one-card-per-screen Review carousel, larger tap targets on touch screens.
 - **Upload from devices.** PC drag-and-drop or phone/tablet photo picker; resumable 8 MB chunks; saved to `<user folder>/Uploads/<YYYY-MM>/` by capture month; exact duplicates skipped; processed immediately.
 - **Albums and sharing.** Hand-picked albums (select in Browse, or press `A` in the viewer), drag to reorder, cover photo. Albums can be private, shared with other users (view or edit), or shared publicly with a link (optional expiry, password, per-link downloads incl. ZIP; revocable). Public links are served by a separate share-only container that exposes nothing else. If a photo in an album is approved for deletion as a duplicate, the album switches to the kept copy.
 - **Other pages:** Browse (filters for owner, date, camera, EXIF, GPS, Live Photos), Map (Leaflet clusters), Settings (thresholds, keeper weights, users and folders (admin), scan schedule, system status).
@@ -44,6 +46,7 @@ Everything deployment-specific is an environment variable in `.env` (template: [
 | `TS_AUTHKEY`, `TS_HOSTNAME` | —, `photo-audit` | Tailscale machine for private app access (key only needed for first start) |
 | `TS_SHARE_AUTHKEY`, `TS_SHARE_HOSTNAME` | —, `photo-share` | Tailscale Funnel machine for public share links |
 | `PUBLIC_SHARE_URL` | same as app | Public base address shown when copying share links |
+| `FACE_THREADS` | `2` | CPU threads per worker process for face detection/recognition |
 | `MAX_UPLOAD_MB` | `20480` | Largest single upload |
 | `DB_SHARED_BUFFERS`, `DB_MEM_LIMIT`, `API_MEM_LIMIT`, `WORKER_MEM_LIMIT` | `512MB`, `1g`, `768m`, `2g` | Resource tuning |
 

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, DEFAULT_CONFIG, type AppConfig, type FileInfo } from "./api";
 import { cls, duration, thumbUrl } from "./util";
@@ -26,6 +26,44 @@ export function Brand({ compact }: { compact?: boolean }) {
       {app_name}
     </div>
   );
+}
+
+/* ---------------- long-press (touch: hold a tile to start selecting) ---------------- */
+
+export function useLongPress(onLong: (index: number) => void, ms = 450) {
+  const timer = useRef<number | undefined>(undefined);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const fired = useRef(false);
+  const cancel = () => {
+    window.clearTimeout(timer.current);
+    start.current = null;
+  };
+  const bind = (index: number) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      if (e.pointerType === "mouse") return;
+      fired.current = false;
+      start.current = { x: e.clientX, y: e.clientY };
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => {
+        fired.current = true;
+        navigator.vibrate?.(15);
+        onLong(index);
+      }, ms);
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (start.current && Math.hypot(e.clientX - start.current.x, e.clientY - start.current.y) > 10) cancel();
+    },
+    onPointerUp: cancel,
+    onPointerCancel: cancel,
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+  });
+  /** Call at the start of onClick: true means this click ended a long-press and should be ignored. */
+  const consumedClick = () => {
+    if (!fired.current) return false;
+    fired.current = false;
+    return true;
+  };
+  return { bind, consumedClick };
 }
 
 /* ---------------- toasts ---------------- */
@@ -196,6 +234,7 @@ export const Icons = {
   overview: I(<><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>),
   review: I(<><rect x="2" y="5" width="9" height="14" rx="1.5" /><rect x="13" y="5" width="9" height="14" rx="1.5" /></>),
   albums: I(<><rect x="3" y="6" width="14" height="14" rx="2" /><path d="M7 3h12a2 2 0 0 1 2 2v12" /><path d="m3 16 4-4 4 4 2-2 4 4" /></>),
+  people: I(<><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><circle cx="17" cy="9" r="2.5" /><path d="M16 14.2A5 5 0 0 1 21.5 19" /></>),
   upload: I(<><path d="M12 16V4" /><path d="m6 10 6-6 6 6" /><path d="M4 20h16" /></>),
   browse: I(<><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 16-5-5-9 9" /></>),
   map: I(<><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z" /><path d="M9 4v14M15 6v14" /></>),

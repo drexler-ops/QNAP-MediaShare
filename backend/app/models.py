@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -102,6 +103,8 @@ class File(Base):
     process_state: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     process_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     thumb_ready: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Face detection: pending | done | error | skip (videos, unreadable previews)
+    face_state: Mapped[str] = mapped_column(String(8), default="pending", server_default="pending", index=True)
 
     # While quarantined, `path` points into .quarantine/ and this holds where it came from.
     original_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
@@ -228,21 +231,42 @@ class Setting(Base):
 
 
 class Person(Base):
+    """Someone recognised in photos. Unnamed rows are automatic clusters waiting for a name."""
+
     __tablename__ = "people"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(128))
+    name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # Hidden = "don't show this person/cluster" (strangers, statues...). Faces stay assigned to it.
+    hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    cover_face_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
 class Face(Base):
+    """A detected face in a photo (coordinates relative to the displayed, rotation-corrected image)."""
+
     __tablename__ = "faces"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    file_id: Mapped[int] = mapped_column(ForeignKey("files.id"), index=True)
-    bbox: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    # v2 will switch this to a pgvector column.
-    embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    person_id: Mapped[int | None] = mapped_column(ForeignKey("people.id"), nullable=True, index=True)
+    file_id: Mapped[int] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"), index=True)
+    bbox: Mapped[list] = mapped_column(JSON)  # [x1, y1, x2, y2] as fractions of width/height
+    score: Mapped[float] = mapped_column(Float, default=0.0)  # detector confidence
+    size_px: Mapped[int] = mapped_column(Integer, default=0)  # face size in the 2048px preview
+    quality: Mapped[bool] = mapped_column(Boolean, default=True)  # big/clear enough to recognise reliably
+    vector: Mapped[bytes] = mapped_column(LargeBinary)  # 512 x float32, L2-normalised (ArcFace)
+    person_id: Mapped[int | None] = mapped_column(
+        ForeignKey("people.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # none | cluster (automatic unnamed group) | auto (recognised as a named person) | manual (set by a user)
+    assignment: Mapped[str] = mapped_column(String(8), default="none", index=True)
+    similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Uncertain match offered for review ("Is this Sue?").
+    suggested_person_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # People a user said this face is NOT; never auto-assigned to them again.
+    rejected: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 # --- albums & sharing ---------------------------------------------------------------------

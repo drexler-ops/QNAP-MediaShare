@@ -22,6 +22,10 @@ def preview_path(file_id: int) -> str:
     return os.path.join(_dir_for(file_id), f"{file_id}_preview.mp4")
 
 
+def face_thumb_path(face_id: int) -> str:
+    return os.path.join(config.thumbs_root, "faces", f"{face_id // 1000:05d}", f"{face_id}.webp")
+
+
 def full_path(file_id: int) -> str:
     """Full-resolution JPEG rendition for formats browsers can't display (HEIC, TIFF, RAW...)."""
     return os.path.join(_dir_for(file_id), f"{file_id}_full.jpg")

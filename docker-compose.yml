@@ -11,6 +11,7 @@ x-app-env: &app-env
   LIBRARY_ROOT: /library
   THUMBS_ROOT: /thumbs
   QUARANTINE_DIRNAME: ${QUARANTINE_DIRNAME:-.quarantine}
+  MODELS_ROOT: /models
   TZ: ${TZ:-UTC}
 
 services:
@@ -53,6 +54,7 @@ services:
     volumes:
       - ${LIBRARY_PATH:?set LIBRARY_PATH in .env}:/library
       - ${THUMBS_PATH:?set THUMBS_PATH in .env}:/thumbs
+      - models:/models:ro
     ports:
       - "${APP_PORT:-8090}:8080"
     mem_limit: ${API_MEM_LIMIT:-768m}
@@ -68,10 +70,13 @@ services:
       <<: *app-env
       WORKER_NAME: nas
       WORKER_CONCURRENCY: ${NAS_WORKER_CONCURRENCY:-2}
+      FACE_THREADS: ${FACE_THREADS:-2}
       SCHEDULER_ENABLED: "true"
     volumes:
       - ${LIBRARY_PATH}:/library
       - ${THUMBS_PATH}:/thumbs
+      # Face recognition models (downloaded on first use, ~190 MB)
+      - models:/models
     mem_limit: ${WORKER_MEM_LIMIT:-2g}
 
   # Optional public share-link service (COMPOSE_PROFILES=public). Same image in share-only mode:
@@ -153,3 +158,4 @@ volumes:
   pgdata:
   tsstate:
   tsshare-state:
+  models:

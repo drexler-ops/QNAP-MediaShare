@@ -24,11 +24,14 @@ services:
       WORKER_CONCURRENCY: ${PC_WORKER_CONCURRENCY:-4}
       SCHEDULER_ENABLED: "false"
       RUN_MIGRATIONS: "false"
+      MODELS_ROOT: /models
     volumes:
       - library:/library:ro
       - thumbs:/thumbs
+      - models:/models  # face models, downloaded once on this PC
 
 volumes:
+  models:
   library:
     driver: local
     driver_opts:

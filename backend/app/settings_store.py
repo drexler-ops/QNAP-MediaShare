@@ -20,6 +20,12 @@ DEFAULTS: dict[str, Any] = {
     # Scanning
     "scan_interval_minutes": 30,
     "scans_paused": False,
+    # Face recognition (InsightFace ArcFace cosine similarity)
+    "faces_enabled": False,
+    "face_auto_threshold": 0.5,  # recognised automatically as a named person
+    "face_suggest_threshold": 0.38,  # offered for review ("Is this Sue?")
+    "face_cluster_threshold": 0.5,  # grouped together as the same unnamed person
+    "face_min_cluster": 3,  # smallest unnamed group worth showing
     # Quarantine
     "purge_days": 30,
     "auto_purge": False,

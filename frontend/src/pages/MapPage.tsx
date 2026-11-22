@@ -18,14 +18,14 @@ export default function MapPage() {
   const viewer = useViewer();
   const cfg = useAppConfig();
   const [filters, setFilters] = useState<BrowseFilters>({
-    owner: "", kind: "", has_exif: "", has_gps: "", camera: "", date_from: "", date_to: "", q: "", status: "", sort: "", live: "",
+    owner: "", kind: "", has_exif: "", has_gps: "", camera: "", date_from: "", date_to: "", q: "", status: "", sort: "", live: "", people: "",
   });
   const facets = useQuery({ queryKey: ["facets"], queryFn: () => api<Facets>("/api/facets") });
   const points = useQuery({
-    queryKey: ["map", filters.owner, filters.kind, filters.camera, filters.date_from, filters.date_to],
+    queryKey: ["map", filters.owner, filters.kind, filters.camera, filters.date_from, filters.date_to, filters.people],
     queryFn: () =>
       api<{ points: [number, number, number, number][] }>(
-        `/api/map/points${qs({ owner: filters.owner, kind: filters.kind, camera: filters.camera, date_from: filters.date_from, date_to: filters.date_to })}`,
+        `/api/map/points${qs({ owner: filters.owner, kind: filters.kind, camera: filters.camera, date_from: filters.date_from, date_to: filters.date_to, people: filters.people })}`,
       ),
   });
 

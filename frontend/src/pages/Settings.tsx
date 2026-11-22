@@ -212,6 +212,15 @@ function Detection() {
             value={w[k]} onChange={(v) => set("keeper_weights", { ...w, [k]: v })} />
         ))}
       </div>
+      <h3>Face recognition</h3>
+      <label className="check">
+        <input type="checkbox" checked={s.faces_enabled} onChange={(e) => set("faces_enabled", e.target.checked)} />
+        Find and group faces (runs on the NAS; first time downloads ~290 MB of InsightFace models, non-commercial license)
+      </label>
+      <div className="form-grid">
+        <Num label="Recognise as (0–1)" value={s.face_auto_threshold} step={0.01} onChange={(v) => set("face_auto_threshold", v)} hint="How similar a face must be to a named person to be tagged automatically. Higher = fewer mistakes, more to review. Default 0.5." />
+        <Num label="Suggest from (0–1)" value={s.face_suggest_threshold} step={0.01} onChange={(v) => set("face_suggest_threshold", v)} hint="Faces at least this similar are offered for review. Default 0.38." />
+      </div>
       <h3>Scanning</h3>
       <div className="form-grid">
         <Num label="Scan every (minutes)" value={s.scan_interval_minutes} onChange={(v) => set("scan_interval_minutes", v)} />

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, post, type AlbumDetail, type Me, type ShareLinkInfo, type UserRow } from "../api";
 import { useViewer } from "../components/MediaViewer";
-import { Confirm, Loading, Modal, Thumb, useAppConfig, useToast } from "../ui";
+import { Confirm, Loading, Modal, Thumb, useAppConfig, useLongPress, useToast } from "../ui";
 import { cls, date } from "../util";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -29,6 +29,12 @@ export default function AlbumPage({ me }: { me: Me }) {
   const [desc, setDesc] = useState("");
   const [sharing, setSharing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const longPress = useLongPress((idx) => {
+    if (!(a?.role === "owner" || a?.role === "editor")) return;
+    setSelecting(true);
+    const iid = order[idx];
+    setSelected((cur) => new Set(cur).add(iid));
+  });
 
   useEffect(() => {
     if (a) setOrder(a.items.map((i) => i.id));
@@ -157,7 +163,12 @@ export default function AlbumPage({ me }: { me: Me }) {
                 onDragOver={(e) => canEdit && e.preventDefault()}
                 onDrop={() => drop(idx)}
                 onDragEnd={() => setDragFrom(null)}
-                onClick={() => (selecting ? toggle(it.id) : open(idx))}
+                {...longPress.bind(idx)}
+                onClick={() => {
+                  if (longPress.consumedClick()) return;
+                  if (selecting) toggle(it.id);
+                  else open(idx);
+                }}
               >
                 <div style={{ position: "relative" }}>
                   <Thumb file={it.primary} size="100%" live={it.is_live_photo} dim={it.primary.status !== "active" && it.primary.status !== "pending_delete"} />

@@ -251,6 +251,11 @@ export interface Settings {
   scans_paused: boolean;
   purge_days: number;
   auto_purge: boolean;
+  faces_enabled: boolean;
+  face_auto_threshold: number;
+  face_suggest_threshold: number;
+  face_cluster_threshold: number;
+  face_min_cluster: number;
 }
 
 export interface Facets {
@@ -259,3 +264,46 @@ export interface Facets {
   date_min: string | null;
   date_max: string | null;
 }
+
+export interface PersonSummary {
+  id: number;
+  name: string | null;
+  hidden: boolean;
+  cover_face_id: number | null;
+  faces: number;
+  photos: number;
+}
+
+export interface PeopleList {
+  named: PersonSummary[];
+  unnamed: PersonSummary[];
+  unnamed_total: number;
+  review: number;
+  status: { enabled: boolean; models_ready: boolean; photos_total: number; photos_done: number; faces: number };
+}
+
+export interface PersonDetail extends PersonSummary {
+  face_list: { face_id: number; file_id: number; item_id: number; assignment: string; similarity: number | null }[];
+  items: ItemInfo[];
+}
+
+export interface ItemFace {
+  face_id: number;
+  bbox: [number, number, number, number];
+  person_id: number | null;
+  name: string | null;
+  assignment: "none" | "cluster" | "auto" | "manual";
+  suggested_id: number | null;
+  suggested_name: string | null;
+}
+
+export interface ReviewFace {
+  face_id: number;
+  file_id: number;
+  item_id: number;
+  suggested_id: number;
+  suggested_name: string;
+  similarity: number;
+}
+
+export const faceThumbUrl = (faceId: number) => `/api/faces/${faceId}/thumb`;

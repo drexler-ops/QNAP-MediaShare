@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, post, qs, type Facets, type GroupDetail, type GroupMember, type GroupType, type Me } from "../api";
@@ -105,6 +105,24 @@ export default function Review({ me }: { me: Me }) {
 
   const [draft, setDraft] = useState<Record<number, Action>>({});
   const [focus, setFocus] = useState(0);
+  // Phones: the copies are a swipeable carousel; the card in view is the selected one.
+  const cardsRef = useRef<HTMLDivElement>(null);
+  const narrow = () => window.matchMedia("(max-width: 700px)").matches;
+  const onCardsScroll = () => {
+    const el = cardsRef.current;
+    if (!el || !narrow()) return;
+    const card = el.querySelector<HTMLElement>(".mcard");
+    if (!card) return;
+    const step = card.offsetWidth + 12;
+    const i = Math.round(el.scrollLeft / step);
+    setFocus((f) => (f === i ? f : i));
+  };
+  const showCard = (i: number) => {
+    setFocus(i);
+    const el = cardsRef.current;
+    const card = el?.querySelectorAll<HTMLElement>(".mcard")[i];
+    if (el && card && narrow()) el.scrollTo({ left: card.offsetLeft - el.offsetLeft, behavior: "smooth" });
+  };
   const [zoom, setZoom] = useState(1);
   const [point, setPoint] = useState<{ x: number; y: number } | null>(null);
   const [playing, setPlaying] = useState<number | null>(null);
@@ -313,7 +331,7 @@ export default function Review({ me }: { me: Me }) {
               ))}
             </div>
           )}
-          <div className="review-cards">
+          <div className="review-cards" ref={cardsRef} onScroll={onCardsScroll}>
             {g.members.map((m, i) => {
               const a = draft[m.id];
               const locked = lockReason(m);
@@ -411,6 +429,13 @@ export default function Review({ me }: { me: Me }) {
             })}
           </div>
 
+          {g.members.length > 1 && (
+            <div className="card-dots" role="tablist" aria-label="Copies">
+              {g.members.map((m, i) => (
+                <button key={m.id} className={cls("card-dot", i === focus && "on", draft[m.id])} onClick={() => showCard(i)} aria-label={`Copy ${i + 1}`} />
+              ))}
+            </div>
+          )}
           <div className="card diff">
             <table>
               <tbody>

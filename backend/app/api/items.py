@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from ..models import DupGroupMember, File, Item, User
+from ..models import DupGroupMember, Face, File, Item, User
 from .deps import current_user, get_db
 from .serialize import Names, file_dict, item_dict
 
@@ -25,8 +25,11 @@ def _filters(
     status: str | None,
     q: str | None,
     live: bool | None = None,
+    people: str | None = None,
 ) -> list:
     conds: list = [File.role == "primary"]
+    for pid in [int(x) for x in (people or "").split(",") if x.strip().isdigit()]:
+        conds.append(File.id.in_(select(Face.file_id).where(Face.person_id == pid)))
     if status == "all":
         pass
     elif status:
@@ -71,13 +74,14 @@ def list_items(
     status: str | None = None,
     q: str | None = None,
     live: bool | None = None,
+    people: str | None = None,
     sort: str = "taken_desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(60, ge=1, le=200),
     db: Session = Depends(get_db),
     _: User = Depends(current_user),
 ):
-    conds = _filters(owner, kind, has_exif, has_gps, camera, date_from, date_to, status, q, live)
+    conds = _filters(owner, kind, has_exif, has_gps, camera, date_from, date_to, status, q, live, people)
     total = db.scalar(select(func.count(File.id)).where(*conds)) or 0
     order = {
         "taken_desc": (File.taken_at.desc().nulls_last(), File.id.desc()),
@@ -149,9 +153,10 @@ def map_points(
     camera: str | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    people: str | None = None,
     db: Session = Depends(get_db),
     _: User = Depends(current_user),
 ):
-    conds = _filters(owner, kind, None, True, camera, date_from, date_to, None, None)
+    conds = _filters(owner, kind, None, True, camera, date_from, date_to, None, None, None, people)
     rows = db.execute(select(File.id, File.item_id, File.gps_lat, File.gps_lon).where(*conds).limit(300_000)).all()
     return {"points": [[fid, iid, round(lat, 6), round(lon, 6)] for fid, iid, lat, lon in rows]}

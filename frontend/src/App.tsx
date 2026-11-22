@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, ApiError, post, type Me } from "./api";
@@ -15,6 +16,9 @@ import Albums from "./pages/Albums";
 import AlbumPage from "./pages/AlbumPage";
 import PublicAlbum from "./pages/PublicAlbum";
 import Upload from "./pages/Upload";
+import People from "./pages/People";
+import PersonPage from "./pages/PersonPage";
+import FaceReview from "./pages/FaceReview";
 
 export default function App() {
   const location = useLocation();
@@ -58,10 +62,42 @@ function Shell({ me }: { me: Me }) {
     { to: "/upload", label: "Upload", icon: Icons.upload },
     { to: "/browse", label: "Browse", icon: Icons.browse },
     { to: "/albums", label: "Albums", icon: Icons.albums },
+    { to: "/people", label: "People", icon: Icons.people },
     ...(cfg.map_tile_url ? [{ to: "/map", label: "Map", icon: Icons.map }] : []),
     { to: "/audit", label: "Audit log", icon: Icons.audit },
     { to: "/settings", label: "Settings", icon: Icons.settings },
   ];
+
+  // Narrow screens: the sidebar becomes a drawer (button, or swipe in from the left edge).
+  const location = useLocation();
+  const [drawer, setDrawer] = useState(false);
+  const touch = useRef<{ x: number; y: number; fromEdge: boolean } | null>(null);
+  useEffect(() => setDrawer(false), [location.pathname, location.search]);
+  useEffect(() => {
+    const narrow = () => window.matchMedia("(max-width: 1023px)").matches;
+    const start = (e: TouchEvent) => {
+      const t = e.touches[0];
+      touch.current = { x: t.clientX, y: t.clientY, fromEdge: t.clientX < 24 };
+    };
+    const end = (e: TouchEvent) => {
+      const s = touch.current;
+      touch.current = null;
+      if (!s || !narrow() || document.querySelector(".viewer-overlay, .overlay")) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - s.x;
+      const dy = t.clientY - s.y;
+      if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      if (dx > 0 && s.fromEdge) setDrawer(true);
+      else if (dx < 0) setDrawer(false);
+    };
+    window.addEventListener("touchstart", start, { passive: true });
+    window.addEventListener("touchend", end, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", start);
+      window.removeEventListener("touchend", end);
+    };
+  }, []);
+  const current = links.find((l) => (l.end ? location.pathname === l.to : location.pathname.startsWith(l.to)));
 
   const signOut = async () => {
     await post("/api/auth/logout");
@@ -72,7 +108,15 @@ function Shell({ me }: { me: Me }) {
 
   return (
     <div className="app">
-      <nav className="sidebar" aria-label="Main">
+      <header className="mobile-bar">
+        <button className="btn ghost menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer}>
+          <span className="burger" />
+          {pending.data?.count ? <span className="nav-badge dot">{pending.data.count}</span> : null}
+        </button>
+        <strong className="mobile-title">{current?.label ?? ""}</strong>
+      </header>
+      {drawer && <div className="drawer-backdrop" onClick={() => setDrawer(false)} aria-hidden="true" />}
+      <nav className={"sidebar" + (drawer ? " open" : "")} aria-label="Main">
         <Brand />
         {links.map((l) => (
           <NavLink key={l.to} to={l.to} end={l.end} className={({ isActive }) => "nav-link" + (isActive ? " active" : "")}>
@@ -102,6 +146,9 @@ function Shell({ me }: { me: Me }) {
           <Route path="/upload" element={<Upload />} />
           <Route path="/browse" element={<Browse />} />
           <Route path="/albums" element={<Albums />} />
+          <Route path="/people" element={<People />} />
+          <Route path="/people/review" element={<FaceReview />} />
+          <Route path="/people/:id" element={<PersonPage />} />
           <Route path="/albums/:id" element={<AlbumPage me={me} />} />
           {cfg.map_tile_url && <Route path="/map" element={<MapPage />} />}
           <Route path="/audit" element={<Audit />} />

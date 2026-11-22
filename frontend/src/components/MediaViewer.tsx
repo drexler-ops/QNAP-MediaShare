@@ -5,13 +5,16 @@
  * instantly, then swap in the full-resolution rendition (/api/files/:id/full; HEIC/TIFF/RAW are
  * converted server-side). Videos play through the browser-safe preview. Nothing is downloaded unless
  * the user explicitly presses Download.
+ *
+ * Touch: double-tap to zoom, drag to pan when zoomed, swipe left/right for next/previous, swipe down
+ * to close. Faces: toggle with the Faces button (P); tap a face to name it or correct it.
  */
-import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { createContext, Fragment, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api, type FileInfo, type ItemInfo } from "../api";
+import { api, post, type FileInfo, type ItemFace, type ItemInfo } from "../api";
 import { internalUrls, MediaUrlsContext, useMediaUrls, type MediaUrls } from "../media-urls";
-import { Spinner } from "../ui";
+import { Spinner, useToast } from "../ui";
 import { bytes, camera, cls, date, dims, duration, STATUS_LABEL } from "../util";
 import AlbumPicker from "./AlbumPicker";
 import { VideoPlayer } from "./MediaView";
@@ -27,7 +30,7 @@ export interface ViewerEntry {
 export interface ViewerOptions {
   /** Where media is loaded from (share-link URLs on public pages). */
   urls?: MediaUrls;
-  /** Public share page: no album actions, minimal metadata. */
+  /** Public share page: no album/face actions, minimal metadata. */
   publicMode?: boolean;
 }
 
@@ -64,6 +67,7 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
 }
 
 const fetchItem = (id: number) => api<ItemInfo>(`/api/items/${id}`);
+const fetchFaces = (id: number) => api<ItemFace[]>(`/api/items/${id}/faces`);
 
 function readPref(key: string, fallback: boolean): boolean {
   try {
@@ -106,12 +110,22 @@ function MediaViewer({
   const it = entry.info ?? q.data;
   const f = it?.primary;
   const [showInfo, setShowInfo] = useState(() => readPref(publicMode ? "viewer.info.public" : "viewer.info", !publicMode));
+  const [showFaces, setShowFaces] = useState(() => !publicMode && readPref("viewer.faces", false));
   const [live, setLive] = useState(false);
   const [picker, setPicker] = useState(false);
-  const download = f && f.status !== "purged" ? urls.download(f.id) : null;
+  const [tagging, setTagging] = useState<ItemFace | null>(null);
+  const [zoomed, setZoomed] = useState(false);
+  const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
   const zoom = useRef<ZoomApi | null>(null);
   const root = useRef<HTMLDivElement>(null);
+  const swipe = useRef<{ x: number; y: number; id: number; t: number } | null>(null);
   const many = entries.length > 1;
+  const download = f && f.status !== "purged" ? urls.download(f.id) : null;
+  const facesQ = useQuery({
+    queryKey: ["item-faces", entry.item],
+    queryFn: () => fetchFaces(entry.item),
+    enabled: !publicMode && (showFaces || showInfo) && f?.kind === "image",
+  });
 
   const go = useCallback(
     (delta: number) => {
@@ -121,7 +135,11 @@ function MediaViewer({
     [index, entries.length, onIndex],
   );
 
-  useEffect(() => setLive(false), [entry.item]);
+  useEffect(() => {
+    setLive(false);
+    setTagging(null);
+    setZoomed(false);
+  }, [entry.item]);
 
   // Prefetch neighbours' details and previews so stepping through feels instant.
   useEffect(() => {
@@ -139,6 +157,13 @@ function MediaViewer({
       return !v;
     });
   }, [publicMode]);
+  const toggleFaces = useCallback(() => {
+    setShowFaces((v) => {
+      writePref("viewer.faces", !v);
+      return !v;
+    });
+    setTagging(null);
+  }, []);
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -149,18 +174,20 @@ function MediaViewer({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (picker || ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) return; // let the dialog handle keys
+      if (picker || ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) return; // let dialogs handle keys
       e.stopImmediatePropagation();
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key;
       if (k === "Escape") {
-        if (document.fullscreenElement) return; // browser exits fullscreen first
-        onClose();
+        if (tagging) setTagging(null);
+        else if (document.fullscreenElement) return; // browser exits fullscreen first
+        else onClose();
       } else if (k === "ArrowRight") go(1);
       else if (k === "ArrowLeft") go(-1);
       else if (k === "Home") onIndex(0);
       else if (k === "End") onIndex(entries.length - 1);
       else if (k === "i" || k === "I") toggleInfo();
+      else if ((k === "p" || k === "P") && !publicMode) toggleFaces();
       else if (k === "f" || k === "F") toggleFullscreen();
       else if (k === "+" || k === "=") zoom.current?.zoomBy(1.5);
       else if (k === "-" || k === "_") zoom.current?.zoomBy(1 / 1.5);
@@ -172,7 +199,7 @@ function MediaViewer({
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [go, onClose, onIndex, entries.length, toggleInfo, toggleFullscreen, it?.is_live_photo, picker, publicMode]);
+  }, [go, onClose, onIndex, entries.length, toggleInfo, toggleFaces, toggleFullscreen, it?.is_live_photo, picker, publicMode, tagging]);
 
   // Lock page scroll underneath.
   useEffect(() => {
@@ -182,6 +209,32 @@ function MediaViewer({
       document.body.style.overflow = prev;
     };
   }, []);
+
+  // Touch swipes on the stage (only when not zoomed in): left/right = next/previous, down = close.
+  const onStageDown = (e: React.PointerEvent) => {
+    if (e.pointerType !== "touch" || zoomed || tagging) return;
+    swipe.current = { x: e.clientX, y: e.clientY, id: e.pointerId, t: Date.now() };
+  };
+  const onStageMove = (e: React.PointerEvent) => {
+    const s = swipe.current;
+    if (!s || s.id !== e.pointerId) return;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) setDrag({ dx: Math.abs(dx) > Math.abs(dy) ? dx : 0, dy: dy > 0 && dy > Math.abs(dx) ? dy : 0 });
+  };
+  const onStageUp = (e: React.PointerEvent) => {
+    const s = swipe.current;
+    swipe.current = null;
+    setDrag(null);
+    if (!s || s.id !== e.pointerId) return;
+    const dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    const fast = Date.now() - s.t < 600;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.3 && fast) go(dx < 0 ? 1 : -1);
+    else if (dy > 90 && dy > Math.abs(dx) * 1.3) onClose();
+  };
+
+  const faces = showFaces && f?.kind === "image" && !live ? facesQ.data ?? [] : [];
 
   return (
     <div className={cls("viewer-overlay", showInfo && "with-info")} ref={root} role="dialog" aria-modal="true" aria-label="Media viewer">
@@ -204,23 +257,28 @@ function MediaViewer({
         <div className="viewer-actions">
           {it?.is_live_photo && it.companion && (
             <button className={cls("vbtn", live && "on")} onClick={() => setLive((v) => !v)} title="Play the Live Photo motion (L)">
-              ◉ Live
+              ◉ <span className="vlabel">Live</span>
+            </button>
+          )}
+          {!publicMode && f?.kind === "image" && (
+            <button className={cls("vbtn", showFaces && "on")} onClick={toggleFaces} title="Show and tag faces (P)">
+              ☺ <span className="vlabel">Faces</span>
             </button>
           )}
           {!publicMode && f && (
             <button className="vbtn" onClick={() => setPicker(true)} title="Add to an album (A)">
-              ＋ Album
+              ＋ <span className="vlabel">Album</span>
             </button>
           )}
           <button className={cls("vbtn", showInfo && "on")} onClick={toggleInfo} title="Details (I)">
-            ⓘ Info
+            ⓘ <span className="vlabel">Info</span>
           </button>
-          <button className="vbtn" onClick={toggleFullscreen} title="Full screen (F)">
+          <button className="vbtn hide-touch" onClick={toggleFullscreen} title="Full screen (F)">
             ⛶
           </button>
           {download && (
             <a className="vbtn" href={download} title="Download the original file to this computer">
-              ⤓ Download
+              ⤓ <span className="vlabel">Download</span>
             </a>
           )}
           <button className="vbtn" onClick={onClose} title="Close (Esc)" aria-label="Close">
@@ -229,7 +287,17 @@ function MediaViewer({
         </div>
       </header>
 
-      <div className="viewer-stage">
+      <div
+        className="viewer-stage"
+        onPointerDown={onStageDown}
+        onPointerMove={onStageMove}
+        onPointerUp={onStageUp}
+        onPointerCancel={() => {
+          swipe.current = null;
+          setDrag(null);
+        }}
+        style={drag ? { transform: `translate(${drag.dx * 0.6}px, ${drag.dy * 0.6}px)`, opacity: drag.dy ? Math.max(0.4, 1 - drag.dy / 400) : 1 } : undefined}
+      >
         {!f ? (
           <Spinner />
         ) : f.status === "purged" ? (
@@ -239,7 +307,15 @@ function MediaViewer({
         ) : f.kind === "video" ? (
           <VideoPlayer key={f.id} file={f} autoPlay />
         ) : (
-          <ZoomImage key={f.id} file={f} apiRef={zoom} />
+          <ZoomImage
+            key={f.id}
+            file={f}
+            apiRef={zoom}
+            faces={faces}
+            activeFace={tagging?.face_id ?? null}
+            onFace={(face) => setTagging(face)}
+            onZoomChange={setZoomed}
+          />
         )}
         {many && index > 0 && (
           <button className="viewer-nav prev" onClick={() => go(-1)} aria-label="Previous (←)">
@@ -251,9 +327,10 @@ function MediaViewer({
             ›
           </button>
         )}
+        {tagging && it && <FaceTagger face={tagging} itemId={it.id} onDone={() => setTagging(null)} />}
       </div>
 
-      {showInfo && <InfoPanel it={it} onClose={onClose} publicMode={publicMode} />}
+      {showInfo && <InfoPanel it={it} faces={facesQ.data} onClose={onClose} publicMode={publicMode} />}
 
       {many && <Filmstrip entries={entries} index={index} onIndex={onIndex} />}
       {picker && it && <AlbumPicker itemIds={[it.id]} onClose={() => setPicker(false)} z={3500} />}
@@ -261,14 +338,32 @@ function MediaViewer({
   );
 }
 
-/** Image with wheel/drag/double-click zoom. Shows the 2048px preview at once, then the full-resolution version. */
-function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefObject<ZoomApi | null> }) {
+/** Image with wheel/drag/double-click (double-tap) zoom, plus an optional face overlay that zooms with it. */
+function ZoomImage({
+  file,
+  apiRef,
+  faces,
+  activeFace,
+  onFace,
+  onZoomChange,
+}: {
+  file: FileInfo;
+  apiRef: React.MutableRefObject<ZoomApi | null>;
+  faces: ItemFace[];
+  activeFace: number | null;
+  onFace: (f: ItemFace) => void;
+  onZoomChange: (zoomed: boolean) => void;
+}) {
   const urls = useMediaUrls();
   const [src, setSrc] = useState<string | null>(file.thumb ? urls.thumb(file.id, "l") : null);
   const [quality, setQuality] = useState<"preview" | "full" | "failed">("preview");
   const [view, setView] = useState({ s: 1, x: 0, y: 0 });
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
+  const [boxSize, setBoxSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const box = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+  const drag = useRef<{ px: number; py: number; x: number; y: number; id: number } | null>(null);
+  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
+  const touchToggled = useRef(0); // browsers may also fire dblclick after a double-tap
 
   useEffect(() => {
     let alive = true;
@@ -286,7 +381,19 @@ function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefO
     };
   }, [file.id, urls]);
 
-  // Zoom keeping the point under (cx, cy) — viewport coords relative to the box centre — fixed.
+  useEffect(() => onZoomChange(view.s > 1), [view.s, onZoomChange]);
+
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const update = () => setBoxSize({ w: el.clientWidth, h: el.clientHeight });
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Zoom keeping the point under (cx, cy) - coords relative to the box centre - fixed on screen.
   const zoomAt = useCallback((factor: number, cx = 0, cy = 0) => {
     setView((v) => {
       const s = Math.min(8, Math.max(1, v.s * factor));
@@ -308,6 +415,11 @@ function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefO
     return [clientX - r.left - r.width / 2, clientY - r.top - r.height / 2] as const;
   };
 
+  const toggleZoomAt = (clientX: number, clientY: number) => {
+    if (view.s > 1) setView({ s: 1, x: 0, y: 0 });
+    else zoomAt(2.5, ...rel(clientX, clientY));
+  };
+
   // Non-passive wheel listener so the page doesn't scroll while zooming.
   useEffect(() => {
     const el = box.current;
@@ -321,6 +433,15 @@ function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefO
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoomAt]);
 
+  // Fit the image inside the box (like object-fit: contain) so faces can be positioned in % of it.
+  const frame = useMemo(() => {
+    if (!natural || !boxSize.w || !boxSize.h) return null;
+    const k = Math.min(boxSize.w / natural.w, boxSize.h / natural.h);
+    const w = natural.w * k;
+    const h = natural.h * k;
+    return { w, h, left: (boxSize.w - w) / 2, top: (boxSize.h - h) / 2 };
+  }, [natural, boxSize]);
+
   if (!src && quality === "failed") return <div className="viewer-msg">This image can't be displayed ({file.ext.toUpperCase()}).</div>;
 
   return (
@@ -328,32 +449,72 @@ function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefO
       ref={box}
       className={cls("zoom-box", view.s > 1 && "zoomed", drag.current && "dragging")}
       onDoubleClick={(e) => {
-        if (view.s > 1) setView({ s: 1, x: 0, y: 0 });
-        else zoomAt(2.5, ...rel(e.clientX, e.clientY));
+        if (Date.now() - touchToggled.current > 600) toggleZoomAt(e.clientX, e.clientY);
       }}
       onPointerDown={(e) => {
-        if (view.s === 1 || e.button !== 0) return;
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
-        drag.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y };
+        if (e.pointerType === "touch") {
+          const now = Date.now();
+          const lt = lastTap.current;
+          if (lt && now - lt.t < 320 && Math.hypot(e.clientX - lt.x, e.clientY - lt.y) < 40) {
+            lastTap.current = null;
+            touchToggled.current = now;
+            toggleZoomAt(e.clientX, e.clientY); // double-tap
+            e.stopPropagation();
+            return;
+          }
+          lastTap.current = { t: now, x: e.clientX, y: e.clientY };
+        }
+        if (view.s === 1 || (e.pointerType === "mouse" && e.button !== 0)) return;
+        e.stopPropagation(); // panning a zoomed photo is not a swipe
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        drag.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, id: e.pointerId };
       }}
       onPointerMove={(e) => {
         const d = drag.current;
-        if (d) setView((v) => ({ ...v, x: d.x + e.clientX - d.px, y: d.y + e.clientY - d.py }));
+        if (d && d.id === e.pointerId) setView((v) => ({ ...v, x: d.x + e.clientX - d.px, y: d.y + e.clientY - d.py }));
       }}
       onPointerUp={() => (drag.current = null)}
       onPointerCancel={() => (drag.current = null)}
     >
       {src ? (
-        <img
-          src={src}
-          alt={file.name}
-          draggable={false}
-          style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})` }}
-        />
+        <div
+          className="zoom-frame"
+          style={
+            frame
+              ? { left: frame.left, top: frame.top, width: frame.w, height: frame.h, transform: `translate(${view.x}px, ${view.y}px) scale(${view.s})` }
+              : { visibility: "hidden" }
+          }
+        >
+          <img
+            src={src}
+            alt={file.name}
+            draggable={false}
+            onLoad={(e) => setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
+          />
+          {faces.map((fc) => {
+            const [x1, y1, x2, y2] = fc.bbox;
+            const label = fc.name ?? (fc.suggested_name ? `${fc.suggested_name}?` : "Who?");
+            return (
+              <button
+                key={fc.face_id}
+                className={cls("face-box", !fc.name && "unknown", activeFace === fc.face_id && "active")}
+                style={{ left: `${x1 * 100}%`, top: `${y1 * 100}%`, width: `${(x2 - x1) * 100}%`, height: `${(y2 - y1) * 100}%` }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFace(fc);
+                }}
+                aria-label={fc.name ? `Face: ${fc.name}` : "Unknown face, tap to name"}
+              >
+                <span className="face-label" style={{ transform: `scale(${1 / view.s})` }}>{label}</span>
+              </button>
+            );
+          })}
+        </div>
       ) : (
         <Spinner />
       )}
-      <div className="zoom-hud" onDoubleClick={(e) => e.stopPropagation()}>
+      <div className="zoom-hud" onDoubleClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
         <button className="vbtn" onClick={() => zoomAt(1 / 1.5)} aria-label="Zoom out (−)">−</button>
         <button className="vbtn zoom-pct" onClick={() => setView({ s: 1, x: 0, y: 0 })} title="Fit to screen (0)">
           {Math.round(view.s * 100)}%
@@ -367,7 +528,78 @@ function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefO
   );
 }
 
-function InfoPanel({ it, onClose, publicMode }: { it: ItemInfo | undefined; onClose: () => void; publicMode: boolean }) {
+/** Popover to name/correct a face (shared family list; every change is audited server-side). */
+function FaceTagger({ face, itemId, onDone }: { face: ItemFace; itemId: number; onDone: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const names = useQuery({ queryKey: ["people-names"], queryFn: () => api<{ id: number; name: string }[]>("/api/people/names") });
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["item-faces", itemId] });
+    qc.invalidateQueries({ queryKey: ["people"] });
+    qc.invalidateQueries({ queryKey: ["people-names"] });
+    qc.invalidateQueries({ queryKey: ["person"] });
+  };
+  const act = useMutation({
+    mutationFn: ({ path, body }: { path: string; body: unknown }) => post(path, body),
+    onSuccess: () => {
+      refresh();
+      onDone();
+    },
+    onError: (e) => toast(String(e instanceof Error ? e.message : e), true),
+  });
+  const ids = { face_ids: [face.face_id] };
+  const assign = (n: string) => n.trim() && act.mutate({ path: "/api/faces/assign", body: { ...ids, name: n.trim() } });
+
+  return (
+    <div className="face-tagger" onPointerDown={(e) => e.stopPropagation()} role="dialog" aria-label="Name this face">
+      {face.name ? (
+        <div className="row" style={{ marginBottom: 8 }}>
+          <strong className="grow">{face.name}</strong>
+          <button className="vbtn" onClick={() => act.mutate({ path: "/api/faces/unassign", body: ids })}>Not {face.name}</button>
+        </div>
+      ) : face.suggested_name ? (
+        <div className="row" style={{ marginBottom: 8 }}>
+          <span className="grow">Is this <strong>{face.suggested_name}</strong>?</span>
+          <button className="vbtn on" onClick={() => act.mutate({ path: "/api/faces/confirm", body: ids })}>Yes</button>
+          <button className="vbtn" onClick={() => act.mutate({ path: "/api/faces/unassign", body: ids })}>No</button>
+        </div>
+      ) : null}
+      <form className="row" style={{ flexWrap: "nowrap" }} onSubmit={(e) => { e.preventDefault(); assign(name); }}>
+        <input
+          type="text"
+          list="face-names"
+          placeholder={face.name ? "Someone else…" : "Who is this?"}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          autoFocus
+          className="grow"
+          aria-label="Name"
+        />
+        <datalist id="face-names">
+          {names.data?.map((p) => <option key={p.id} value={p.name} />)}
+        </datalist>
+        <button className="vbtn on" disabled={!name.trim() || act.isPending}>Save</button>
+      </form>
+      <div className="row" style={{ marginTop: 8, justifyContent: "space-between" }}>
+        <button className="vbtn" onClick={() => act.mutate({ path: "/api/faces/ignore", body: ids })} title="Remove this detection">Not a face</button>
+        <button className="vbtn" onClick={onDone}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function InfoPanel({
+  it,
+  faces,
+  onClose,
+  publicMode,
+}: {
+  it: ItemInfo | undefined;
+  faces: ItemFace[] | undefined;
+  onClose: () => void;
+  publicMode: boolean;
+}) {
   if (!it) return <aside className="viewer-info" />;
   const f = it.primary;
   if (publicMode) {
@@ -387,8 +619,21 @@ function InfoPanel({ it, onClose, publicMode }: { it: ItemInfo | undefined; onCl
       </aside>
     );
   }
+  const people = Array.from(
+    new Map((faces ?? []).filter((x) => x.person_id && x.name).map((x) => [x.person_id!, x.name!])).entries(),
+  );
+  const unknown = (faces ?? []).filter((x) => !x.name).length;
   return (
     <aside className="viewer-info">
+      {(people.length > 0 || unknown > 0) && (
+        <div className="row" style={{ marginBottom: 12 }}>
+          <span className="muted small">People:</span>
+          {people.map(([pid, name]) => (
+            <Link key={pid} to={`/people/${pid}`} className="badge accent" onClick={onClose}>{name}</Link>
+          ))}
+          {unknown > 0 && <span className="badge">{unknown} unnamed</span>}
+        </div>
+      )}
       <dl className="kv">
         <dt>Owner</dt><dd>{f.owner}</dd>
         <dt>Folder</dt><dd className="mono">{f.folder || "/"}</dd>
@@ -432,9 +677,10 @@ function InfoPanel({ it, onClose, publicMode }: { it: ItemInfo | undefined; onCl
           </dl>
         </details>
       )}
-      <div className="viewer-keys">
-        <kbd>←</kbd><kbd>→</kbd> browse · <kbd>+</kbd><kbd>−</kbd><kbd>0</kbd> zoom · <kbd>A</kbd> add to album · <kbd>F</kbd> full screen · <kbd>I</kbd> info · <kbd>Esc</kbd> close
+      <div className="viewer-keys hide-touch">
+        <kbd>←</kbd><kbd>→</kbd> browse · <kbd>+</kbd><kbd>−</kbd><kbd>0</kbd> zoom · <kbd>P</kbd> faces · <kbd>A</kbd> add to album · <kbd>F</kbd> full screen · <kbd>I</kbd> info · <kbd>Esc</kbd> close
       </div>
+      <div className="viewer-keys show-touch">Double-tap to zoom · swipe for next · swipe down to close</div>
     </aside>
   );
 }

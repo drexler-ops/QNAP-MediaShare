@@ -113,8 +113,53 @@ def handle_process(session: Session, job: Job) -> dict[str, Any]:
         result: dict[str, Any] = {"hashed": hash_files(session, ids)}
     else:
         result = process_files(session, ids)
+        if get_settings(session)["faces_enabled"]:
+            ready = list(session.scalars(select(File.id).where(
+                File.id.in_(ids), File.kind == "image", File.thumb_ready.is_(True), File.face_state == "pending")))
+            if ready:
+                enqueue(session, "faces", {"ids": ready}, priority=-1)
     maybe_enqueue_group(session, exclude_job_id=job.id)
     return result
+
+
+FACE_BATCH = 25
+
+
+def handle_faces_scan(session: Session, job: Job) -> dict[str, Any]:
+    """Queue face detection for every photo that hasn't had it yet."""
+    ids = list(session.scalars(select(File.id).where(
+        File.kind == "image", File.thumb_ready.is_(True), File.face_state == "pending",
+        File.status.in_(("active", "pending_delete")))))
+    n = 0
+    for i in range(0, len(ids), FACE_BATCH):
+        enqueue(session, "faces", {"ids": ids[i:i + FACE_BATCH]}, priority=-1)
+        n += 1
+    if not n:
+        maybe_enqueue_face_group(session)
+    return {"photos": len(ids), "batches": n}
+
+
+def handle_faces(session: Session, job: Job) -> dict[str, Any]:
+    from .faces.pipeline import process_faces
+
+    result = process_faces(session, list(job.payload.get("ids", [])))
+    maybe_enqueue_face_group(session, exclude_job_id=job.id)
+    return result
+
+
+def maybe_enqueue_face_group(session: Session, exclude_job_id: int | None = None) -> bool:
+    q = select(func.count(Job.id)).where(Job.type == "faces", Job.state.in_(("queued", "running")))
+    if exclude_job_id is not None:
+        q = q.where(Job.id != exclude_job_id)
+    if session.scalar(q):
+        return False
+    return enqueue(session, "face_group", unique=True, priority=-1) is not None
+
+
+def handle_face_group(session: Session, job: Job) -> dict[str, Any]:
+    from .faces.grouping import run_face_grouping
+
+    return run_face_grouping(session)
 
 
 def _sha_needed(session: Session) -> list[int]:
@@ -160,6 +205,9 @@ HANDLERS: dict[str, Callable[[Session, Job], dict[str, Any]]] = {
     "group": handle_group,
     "preview": handle_preview,
     "purge": handle_purge,
+    "faces_scan": handle_faces_scan,
+    "faces": handle_faces,
+    "face_group": handle_face_group,
 }
 
 
