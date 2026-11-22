@@ -3,10 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, post, type AlbumDetail, type Me, type ShareLinkInfo, type UserRow } from "../api";
 import { useViewer } from "../components/MediaViewer";
-import { Confirm, Loading, Modal, Thumb, useAppConfig, useTileSelection, useToast } from "../ui";
+import { Confirm, Loading, Modal, Pager, pageCount, Thumb, useAppConfig, usePageParam, useTileSelection, useToast } from "../ui";
 import { cls, date } from "../util";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+const PAGE_SIZE = 60;
 
 export default function AlbumPage({ me }: { me: Me }) {
   const { id } = useParams();
@@ -21,6 +23,7 @@ export default function AlbumPage({ me }: { me: Me }) {
   const isOwner = a?.role === "owner";
 
   const [order, setOrder] = useState<number[]>([]);
+  const [page, setPage] = usePageParam();
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState("");
@@ -71,7 +74,15 @@ export default function AlbumPage({ me }: { me: Me }) {
     );
   }
 
-  const open = (idx: number) => viewer.open(items.map((i) => ({ item: i.id, file: i.primary.id })), idx);
+  // Only one page of tiles is drawn; the viewer still steps through the whole album and closing it
+  // lands on the page you ended on.
+  const pages = pageCount(items.length, PAGE_SIZE);
+  const start = (Math.min(page, pages) - 1) * PAGE_SIZE;
+  const shown = items.slice(start, start + PAGE_SIZE);
+  const open = (idx: number) =>
+    viewer.open(items.map((i) => ({ item: i.id, file: i.primary.id })), idx, {
+      onClose: (pos) => setPage(Math.floor(pos / PAGE_SIZE) + 1),
+    });
   const drop = (to: number) => {
     if (dragFrom === null || dragFrom === to) return;
     const next = [...order];
@@ -141,8 +152,11 @@ export default function AlbumPage({ me }: { me: Me }) {
       ) : (
         <>
           {canEdit && !selecting && <p className="small faint" style={{ marginTop: -6 }}>Drag photos to reorder.</p>}
+          <Pager top page={Math.min(page, pages)} pages={pages} onPage={setPage} />
           <div className="grid">
-            {items.map((it, idx) => (
+            {shown.map((it, i) => {
+              const idx = start + i; // position in the whole album (selection, reordering, viewer)
+              return (
               <div
                 key={it.id}
                 className={cls("tile", selecting && selected.has(it.id) && "selected", dragFrom === idx && "dragging")}
@@ -163,8 +177,10 @@ export default function AlbumPage({ me }: { me: Me }) {
                 </div>
                 <div className="tile-meta">{date(it.primary.taken_at, false)}</div>
               </div>
-            ))}
+              );
+            })}
           </div>
+          <Pager page={Math.min(page, pages)} pages={pages} onPage={setPage} />
         </>
       )}
 

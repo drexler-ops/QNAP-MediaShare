@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { api, DEFAULT_CONFIG, type AppConfig, type FileInfo } from "./api";
 import { cls, duration, thumbUrl } from "./util";
 
@@ -238,6 +239,49 @@ export function useTileSelection<K>(keys: K[], opts: { enabled?: boolean; mouseD
   };
 
   return { selecting, selected, setSelected, start, stop, tileProps, click };
+}
+
+/* ---------------- pagination ---------------- */
+
+/** Current page from the URL (?page=2), so Back and refresh keep your place. Page 1 = no parameter. */
+export function usePageParam(key = "page"): [number, (n: number) => void] {
+  const [params, setParams] = useSearchParams();
+  const page = Math.max(1, Math.floor(Number(params.get(key))) || 1);
+  const set = useCallback(
+    (n: number) =>
+      setParams(
+        (cur) => {
+          const next = new URLSearchParams(cur);
+          if (n <= 1) next.delete(key);
+          else next.set(key, String(n));
+          return next;
+        },
+        { replace: true },
+      ),
+    [key, setParams],
+  );
+  return [page, set];
+}
+
+export const pageCount = (total: number, size: number) => Math.max(1, Math.ceil(total / size));
+export const pageSlice = <T,>(list: T[], page: number, size: number): T[] => list.slice((page - 1) * size, page * size);
+
+/** Prev / "Page x of y" / Next. Scrolls back to the top of the list when the page changes (bottom pager). */
+export function Pager({ page, pages, onPage, top }: { page: number; pages: number; onPage: (n: number) => void; top?: boolean }) {
+  if (pages <= 1) return null;
+  const go = (n: number) => {
+    onPage(Math.min(pages, Math.max(1, n)));
+    if (!top) window.scrollTo({ top: 0 });
+  };
+  return (
+    <nav className={cls("pager", top && "pager-top")} aria-label="Pages">
+      <button className="btn sm" disabled={page <= 1} onClick={() => go(1)} aria-label="First page">«</button>
+      <button className="btn sm" disabled={page <= 1} onClick={() => go(page - 1)}>‹ Prev</button>
+      <span className="muted small">Page {page.toLocaleString()} of {pages.toLocaleString()}</span>
+      <button className="btn sm" disabled={page >= pages} onClick={() => go(page + 1)}>Next ›</button>
+      <button className="btn sm" disabled={page >= pages} onClick={() => go(pages)} aria-label="Last page">»</button>
+    </nav>
+  );
 }
 
 /* ---------------- toasts ---------------- */

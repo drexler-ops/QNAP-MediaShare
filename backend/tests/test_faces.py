@@ -218,3 +218,21 @@ def test_edit_during_regroup_is_never_overwritten(session, users, monkeypatch):
     p = session.get(Person, pid)
     assert p.name == "Sue"
     assert all(f.assignment == "manual" and f.person_id == pid for f in session.scalars(select(Face)))
+
+
+def test_person_page_and_people_list_are_paged(session, users):
+    files = [with_preview(session, users, f"Alex/pg{i}.jpg") for i in range(5)]
+    session.commit()
+    run(session, files, {f.id: [("A", (10, 10, 90, 90))] for f in files})
+    grouping.run_face_grouping(session)
+    pid = session.scalar(select(Person.id))
+    with TestClient(create_app()) as c:
+        login(c, "Alex")
+        d = c.get(f"/api/people/{pid}?page_size=2&faces_page_size=3").json()
+        assert (len(d["items"]), d["items_total"], len(d["face_list"]), d["faces_total"]) == (2, 5, 3, 5)
+        last = c.get(f"/api/people/{pid}?page=3&page_size=2&faces_page=2&faces_page_size=3").json()
+        assert (len(last["items"]), len(last["face_list"])) == (1, 2)
+        seen = {i["id"] for n in (1, 2, 3) for i in c.get(f"/api/people/{pid}?page={n}&page_size=2").json()["items"]}
+        assert len(seen) == 5  # pages don't overlap or skip
+        lst = c.get("/api/people?unnamed_page_size=1").json()
+        assert len(lst["unnamed"]) == 1 and lst["unnamed_total"] == 1 and lst["unnamed_page"] == 1

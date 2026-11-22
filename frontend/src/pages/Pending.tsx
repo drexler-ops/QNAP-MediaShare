@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, post, type Me, type PendingRow } from "../api";
 import { useViewer, type ViewerEntry } from "../components/MediaViewer";
-import { Confirm, Loading, Thumb, useToast } from "../ui";
+import { Confirm, Loading, pageCount, Pager, pageSlice, Thumb, usePageParam, useToast } from "../ui";
 import { bytes, date, dims } from "../util";
 
 interface ApproveResult {
@@ -11,12 +11,16 @@ interface ApproveResult {
   failed: { id: number; error: string }[];
 }
 
+const ROWS = 50;
+
 export default function Pending({ me }: { me: Me }) {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery({ queryKey: ["pending"], queryFn: () => api<{ to_approve: PendingRow[]; waiting_on_others: PendingRow[] }>("/api/pending") });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirm, setConfirm] = useState<number[] | null>(null);
+  const [page, setPage] = usePageParam();
+  const [wpage, setWpage] = usePageParam("wpage");
   const viewer = useViewer();
   const compare = (r: PendingRow, which: "kept" | "item") => {
     const entries: ViewerEntry[] = [];
@@ -110,7 +114,7 @@ export default function Pending({ me }: { me: Me }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {pageSlice(rows, Math.min(page, pageCount(rows.length, ROWS)), ROWS).map((r) => (
                 <tr key={r.decision_id}>
                   <td>
                     <input type="checkbox" checked={selected.has(r.decision_id)} onChange={() => toggle(r.decision_id)} aria-label="Select" />
@@ -161,6 +165,7 @@ export default function Pending({ me }: { me: Me }) {
           </table>
         )}
       </div>
+      <Pager page={Math.min(page, pageCount(rows.length, ROWS))} pages={pageCount(rows.length, ROWS)} onPage={setPage} />
 
       <h2>Waiting on others ({q.data.waiting_on_others.length})</h2>
       <p className="muted small" style={{ marginTop: -6 }}>Files you marked that belong to someone else.</p>
@@ -170,7 +175,7 @@ export default function Pending({ me }: { me: Me }) {
         ) : (
           <table className="tbl">
             <tbody>
-              {q.data.waiting_on_others.map((r) => (
+              {pageSlice(q.data.waiting_on_others, Math.min(wpage, pageCount(q.data.waiting_on_others.length, ROWS)), ROWS).map((r) => (
                 <tr key={r.decision_id}>
                   <td style={{ width: 80 }}>
                     <Thumb file={r.item.primary} size={56} />
@@ -189,6 +194,7 @@ export default function Pending({ me }: { me: Me }) {
           </table>
         )}
       </div>
+      <Pager top={false} page={Math.min(wpage, pageCount(q.data.waiting_on_others.length, ROWS))} pages={pageCount(q.data.waiting_on_others.length, ROWS)} onPage={setWpage} />
 
       {confirm && (
         <Confirm

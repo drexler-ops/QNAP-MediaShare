@@ -27,11 +27,23 @@ export interface ViewerEntry {
   info?: ItemInfo;
 }
 
+/** A server-paged list: the viewer loads neighbouring pages as you reach either end. */
+export interface ViewerPaging {
+  /** Page the given entries are. */
+  page: number;
+  pageSize: number;
+  total: number;
+  fetch: (page: number) => Promise<ViewerEntry[]>;
+}
+
 export interface ViewerOptions {
   /** Where media is loaded from (share-link URLs on public pages). */
   urls?: MediaUrls;
   /** Public share page: no album/face actions, minimal metadata. */
   publicMode?: boolean;
+  paging?: ViewerPaging;
+  /** Called with the position (0-based, in the whole list) of the item showing when the viewer closes. */
+  onClose?: (position: number) => void;
 }
 
 interface ViewerApi {
@@ -42,12 +54,56 @@ interface ViewerApi {
 const ViewerCtx = createContext<ViewerApi>({ open: () => {}, isOpen: false });
 export const useViewer = () => useContext(ViewerCtx);
 
+type ViewerState = { entries: ViewerEntry[]; index: number; opts: ViewerOptions; first: number; last: number; session: number };
+
 export function ViewerProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<{ entries: ViewerEntry[]; index: number; opts: ViewerOptions } | null>(null);
+  const [state, setState] = useState<ViewerState | null>(null);
+  const loading = useRef<Set<string>>(new Set());
+  const sessions = useRef(0);
   const open = useCallback((entries: ViewerEntry[], start = 0, opts: ViewerOptions = {}) => {
-    if (entries.length) setState({ entries, index: Math.min(Math.max(start, 0), entries.length - 1), opts });
+    if (!entries.length) return;
+    const page = opts.paging?.page ?? 1;
+    loading.current.clear();
+    setState({ entries, index: Math.min(Math.max(start, 0), entries.length - 1), opts, first: page, last: page, session: ++sessions.current });
   }, []);
   const value = useMemo(() => ({ open, isOpen: state !== null }), [open, state]);
+
+  // Paged lists: fetch the next/previous page a few items before the edge, so swiping never stops.
+  useEffect(() => {
+    const pg = state?.opts.paging;
+    if (!state || !pg) return;
+    const pages = Math.max(1, Math.ceil(pg.total / pg.pageSize));
+    const want: ["next" | "prev", number][] = [];
+    if (state.index >= state.entries.length - 6 && state.last < pages) want.push(["next", state.last + 1]);
+    if (state.index <= 5 && state.first > 1) want.push(["prev", state.first - 1]);
+    for (const [dir, page] of want) {
+      const key = `${state.session}:${page}`;
+      if (loading.current.has(key)) continue;
+      loading.current.add(key);
+      const session = state.session;
+      pg.fetch(page)
+        .then((more) =>
+          setState((s) => {
+            if (!s || s.session !== session || !more.length) return s;
+            if (dir === "next") return s.last + 1 === page ? { ...s, entries: [...s.entries, ...more], last: page } : s;
+            return s.first - 1 === page ? { ...s, entries: [...more, ...s.entries], index: s.index + more.length, first: page } : s;
+          }),
+        )
+        .catch(() => loading.current.delete(key)); // try again on the next move
+    }
+  }, [state]);
+
+  const offset = state?.opts.paging ? (state.first - 1) * state.opts.paging.pageSize : 0;
+  const close = useCallback(() => {
+    setState((s) => {
+      if (s) {
+        const off = s.opts.paging ? (s.first - 1) * s.opts.paging.pageSize : 0;
+        const pos = off + s.index;
+        queueMicrotask(() => s.opts.onClose?.(pos));
+      }
+      return null;
+    });
+  }, []);
   return (
     <ViewerCtx.Provider value={value}>
       {children}
@@ -56,9 +112,11 @@ export function ViewerProvider({ children }: { children: ReactNode }) {
           <MediaViewer
             entries={state.entries}
             index={state.index}
+            offset={offset}
+            total={state.opts.paging?.total ?? state.entries.length}
             publicMode={!!state.opts.publicMode}
             onIndex={(index) => setState((s) => (s ? { ...s, index } : s))}
-            onClose={() => setState(null)}
+            onClose={close}
           />
         </MediaUrlsContext.Provider>
       )}
@@ -93,12 +151,17 @@ interface ZoomApi {
 function MediaViewer({
   entries,
   index,
+  offset,
+  total,
   publicMode,
   onIndex,
   onClose,
 }: {
   entries: ViewerEntry[];
   index: number;
+  /** Position of entries[0] in the whole list, and the list's full length (paged lists). */
+  offset: number;
+  total: number;
   publicMode: boolean;
   onIndex: (i: number) => void;
   onClose: () => void;
@@ -380,7 +443,7 @@ function MediaViewer({
         </div>
         {many && (
           <span className="viewer-count">
-            {index + 1} / {entries.length}
+            {(offset + index + 1).toLocaleString()} / {total.toLocaleString()}
           </span>
         )}
         <div className="viewer-actions">

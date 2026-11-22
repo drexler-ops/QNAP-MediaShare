@@ -3,11 +3,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, faceThumbUrl, post, type PersonDetail } from "../api";
 import { useViewer } from "../components/MediaViewer";
-import { Loading, Spinner, Thumb, useToast } from "../ui";
+import { Loading, Pager, pageCount, Spinner, Thumb, usePageParam, useToast } from "../ui";
 import { cls } from "../util";
 import { Avatar } from "./People";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+const PHOTOS = 60;
+const FACES = 120;
 
 export default function PersonPage() {
   const { id } = useParams();
@@ -16,9 +19,12 @@ export default function PersonPage() {
   const toast = useToast();
   const navigate = useNavigate();
   const viewer = useViewer();
+  const [page, setPage] = usePageParam("page");
+  const [fpage, setFpage] = usePageParam("fpage");
   const q = useQuery({
-    queryKey: ["person", pid],
-    queryFn: () => api<PersonDetail>(`/api/people/${pid}`),
+    queryKey: ["person", pid, page, fpage],
+    queryFn: () => api<PersonDetail>(`/api/people/${pid}?page=${page}&page_size=${PHOTOS}&faces_page=${fpage}&faces_page_size=${FACES}`),
+    placeholderData: (prev) => (prev?.id === pid ? prev : undefined),
     retry: false,
     refetchInterval: (query) => (query.state.data?.regrouping ? 3000 : false), // counts catch up after a change
   });
@@ -95,6 +101,18 @@ export default function PersonPage() {
     );
   }
   const label = p.name ?? "Unnamed person";
+  const toEntry = (x: { id: number; primary: { id: number } }) => ({ item: x.id, file: x.primary.id });
+  // The viewer continues through all of this person's photos; closing it lands on the page you ended on.
+  const openPhoto = (i: number) =>
+    viewer.open(p.items.map(toEntry), i, {
+      paging: {
+        page,
+        pageSize: PHOTOS,
+        total: p.items_total,
+        fetch: (n) => api<PersonDetail>(`/api/people/${pid}?page=${n}&page_size=${PHOTOS}&faces_page_size=1`).then((d) => d.items.map(toEntry)),
+      },
+      onClose: (pos) => setPage(Math.floor(pos / PHOTOS) + 1),
+    });
   const ids = [...selected];
   const toggle = (fid: number) =>
     setSelected((s) => {
@@ -139,20 +157,25 @@ export default function PersonPage() {
       <datalist id="person-names">{names.data?.map((n) => <option key={n.id} value={n.name} />)}</datalist>
 
       <div className="seg" style={{ marginBottom: 14 }}>
-        <button className={cls(tab === "photos" && "on")} onClick={() => setTab("photos")}>Photos ({p.items.length})</button>
-        <button className={cls(tab === "faces" && "on")} onClick={() => setTab("faces")}>Faces ({p.face_list.length})</button>
+        <button className={cls(tab === "photos" && "on")} onClick={() => setTab("photos")}>Photos ({p.items_total.toLocaleString()})</button>
+        <button className={cls(tab === "faces" && "on")} onClick={() => setTab("faces")}>Faces ({p.faces_total.toLocaleString()})</button>
       </div>
 
       {tab === "photos" ? (
-        <div className="grid">
-          {p.items.map((it, i) => (
-            <div key={it.id} className="tile" onClick={() => viewer.open(p.items.map((x) => ({ item: x.id, file: x.primary.id })), i)}>
-              <Thumb file={it.primary} size="100%" live={it.is_live_photo} />
-            </div>
-          ))}
-        </div>
+        <>
+          <Pager top page={page} pages={pageCount(p.items_total, PHOTOS)} onPage={setPage} />
+          <div className="grid">
+            {p.items.map((it, i) => (
+              <div key={it.id} className="tile" onClick={() => openPhoto(i)}>
+                <Thumb file={it.primary} size="100%" live={it.is_live_photo} />
+              </div>
+            ))}
+          </div>
+          <Pager page={page} pages={pageCount(p.items_total, PHOTOS)} onPage={setPage} />
+        </>
       ) : (
         <>
+          <Pager top page={fpage} pages={pageCount(p.faces_total, FACES)} onPage={(n) => { setFpage(n); setSelected(new Set()); }} />
           <div className="card pad row select-bar">
             <strong>{selected.size} selected</strong>
             <span className="small faint">Select faces that aren't {label} to fix them</span>
@@ -175,6 +198,7 @@ export default function PersonPage() {
               </button>
             ))}
           </div>
+          <Pager page={fpage} pages={pageCount(p.faces_total, FACES)} onPage={(n) => { setFpage(n); setSelected(new Set()); }} />
         </>
       )}
     </>

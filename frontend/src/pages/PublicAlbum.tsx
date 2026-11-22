@@ -5,7 +5,7 @@ import { useParams } from "react-router-dom";
 import { api, ApiError, post, type FileInfo, type ItemInfo, type PublicAlbum as PublicAlbumData, type PublicItem } from "../api";
 import { useViewer } from "../components/MediaViewer";
 import { shareUrls } from "../media-urls";
-import { Spinner } from "../ui";
+import { Pager, pageCount, Spinner, usePageParam } from "../ui";
 import { date, duration } from "../util";
 
 /** Shape a public item like the app's ItemInfo so the shared viewer can display it (no private fields). */
@@ -23,10 +23,13 @@ function toItemInfo(p: PublicItem): ItemInfo {
   return { id: p.item_id, primary: base, companion, is_live_photo: !!p.live_file_id, owner_id: null, owner: "" };
 }
 
+const PAGE_SIZE = 60;
+
 export default function PublicAlbum() {
   const { token = "" } = useParams();
   const qc = useQueryClient();
   const viewer = useViewer();
+  const [page, setPage] = usePageParam();
   const [password, setPassword] = useState("");
   const [pwError, setPwError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -90,7 +93,10 @@ export default function PublicAlbum() {
   }
 
   const a = q.data;
-  const open = (i: number) => viewer.open(entries, i, { urls, publicMode: true });
+  const pages = pageCount(a.items.length, PAGE_SIZE);
+  const start = (Math.min(page, pages) - 1) * PAGE_SIZE;
+  const open = (i: number) =>
+    viewer.open(entries, i, { urls, publicMode: true, onClose: (pos) => setPage(Math.floor(pos / PAGE_SIZE) + 1) });
   return (
     <div className="public-page">
       <header className="public-head">
@@ -110,9 +116,11 @@ export default function PublicAlbum() {
       {a.items.length === 0 ? (
         <div className="card empty">This album is empty.</div>
       ) : (
+        <>
+        <Pager top page={Math.min(page, pages)} pages={pages} onPage={setPage} />
         <div className="grid public-grid">
-          {a.items.map((p, i) => (
-            <button key={p.item_id} className="tile public-tile" onClick={() => open(i)} aria-label={`Open ${p.name}`}>
+          {a.items.slice(start, start + PAGE_SIZE).map((p, i) => (
+            <button key={p.item_id} className="tile public-tile" onClick={() => open(start + i)} aria-label={`Open ${p.name}`}>
               <div className="thumb" style={{ width: "100%", aspectRatio: "1" }}>
                 {p.thumb ? <img src={urls.thumb(p.file_id)} alt="" loading="lazy" /> : <div className="ph">{p.ext.toUpperCase()}</div>}
                 {(p.kind === "video" || p.live_file_id) && (
@@ -125,6 +133,8 @@ export default function PublicAlbum() {
             </button>
           ))}
         </div>
+        <Pager page={Math.min(page, pages)} pages={pages} onPage={setPage} />
+        </>
       )}
     </div>
   );

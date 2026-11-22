@@ -1,19 +1,23 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, faceThumbUrl, type PeopleList, type PersonSummary } from "../api";
-import { Loading, Spinner, useToast } from "../ui";
+import { Loading, Pager, pageCount, Spinner, usePageParam, useToast } from "../ui";
 import { cls } from "../util";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+const GROUPS = 60;
 
 export default function People() {
   const qc = useQueryClient();
   const toast = useToast();
   const [showHidden, setShowHidden] = useState(false);
+  const [page, setPage] = usePageParam();
   const q = useQuery({
-    queryKey: ["people", showHidden],
-    queryFn: () => api<PeopleList>(`/api/people${showHidden ? "?include_hidden=true" : ""}`),
+    queryKey: ["people", showHidden, page],
+    queryFn: () => api<PeopleList>(`/api/people?unnamed_page=${page}&unnamed_page_size=${GROUPS}${showHidden ? "&include_hidden=true" : ""}`),
+    placeholderData: (prev) => prev,
     refetchInterval: (query) => {
       const s = query.state.data?.status;
       if (s?.regrouping) return 3000; // names are saved; groups and counts are catching up
@@ -43,6 +47,12 @@ export default function People() {
       refresh(); // the list may be out of date
     },
   });
+
+  // Naming the last groups on the last page shrinks the list: step back to a page that exists.
+  const lastPage = q.data ? pageCount(q.data.unnamed_total, GROUPS) : 1;
+  useEffect(() => {
+    if (q.data && page > lastPage) setPage(lastPage);
+  }, [q.data, page, lastPage, setPage]);
 
   if (q.isLoading || !q.data) return <Loading />;
   const { status, named, unnamed, unnamed_total, review } = q.data;
@@ -108,6 +118,7 @@ export default function People() {
           <h2 style={{ marginTop: 28 }}>
             Who's this? <span className="muted small" style={{ fontWeight: 400 }}>{unnamed_total.toLocaleString()} unnamed group{unnamed_total === 1 ? "" : "s"}</span>
           </h2>
+          <Pager top page={page} pages={lastPage} onPage={setPage} />
           {unnamed.length === 0 ? (
             <p className="muted">{processing ? "Groups appear as photos are scanned." : "No unnamed groups."}</p>
           ) : (
@@ -124,6 +135,7 @@ export default function People() {
               ))}
             </div>
           )}
+          <Pager page={page} pages={lastPage} onPage={setPage} />
           <datalist id="people-names">{names.data?.map((n) => <option key={n.id} value={n.name} />)}</datalist>
         </>
       )}

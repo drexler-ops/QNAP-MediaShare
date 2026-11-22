@@ -88,7 +88,13 @@ def _regroup(db: Session) -> None:
 
 
 @router.get("/people")
-def list_people(include_hidden: bool = False, db: Session = Depends(get_db), _: User = Depends(current_user)):
+def list_people(
+    include_hidden: bool = False,
+    unnamed_page: int = Query(1, ge=1),
+    unnamed_page_size: int = Query(60, ge=1, le=240),
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+):
     counts = person_counts(db)
     people = list(db.scalars(select(Person)))
     named = sorted((p for p in people if p.name and (include_hidden or not p.hidden)), key=lambda p: p.name.lower())
@@ -102,8 +108,13 @@ def list_people(include_hidden: bool = False, db: Session = Depends(get_db), _: 
     review = db.scalar(select(func.count(Face.id)).where(Face.suggested_person_id.is_not(None), Face.person_id.is_(None))) or 0
     return {
         "named": [_person_dict(p, counts) for p in named],
-        "unnamed": [_person_dict(p, counts) for p in unnamed[:120]],
+        "unnamed": [
+            _person_dict(p, counts)
+            for p in unnamed[(unnamed_page - 1) * unnamed_page_size: unnamed_page * unnamed_page_size]
+        ],
         "unnamed_total": len(unnamed),
+        "unnamed_page": unnamed_page,
+        "unnamed_page_size": unnamed_page_size,
         "review": review,
         "status": {
             "enabled": bool(get_settings(db)["faces_enabled"]),
@@ -140,16 +151,33 @@ def review(limit: int = Query(120, le=500), db: Session = Depends(get_db), _: Us
 
 
 @router.get("/people/{person_id}")
-def get_person(person_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+def get_person(
+    person_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(60, ge=1, le=240),
+    faces_page: int = Query(1, ge=1),
+    faces_page_size: int = Query(120, ge=1, le=480),
+    db: Session = Depends(get_db),
+    _: User = Depends(current_user),
+):
+    """One person: a page of their photos (newest first) and a page of their faces."""
     p = _person(db, person_id)
-    faces = db.execute(
-        select(Face, File.item_id)
-        .join(File, File.id == Face.file_id)
-        .where(Face.person_id == p.id, File.status.in_(LIVE))
-        .order_by(File.taken_at.desc().nulls_last(), Face.id.desc())
-    ).all()
-    item_ids = list(dict.fromkeys(item_id for _, item_id in faces if item_id))
+    live = (Face.person_id == p.id, File.status.in_(LIVE), File.item_id.is_not(None))
+    # Photos: one row per item, newest first.
+    newest = func.max(File.taken_at)
+    item_q = (
+        select(File.item_id).join(Face, Face.file_id == File.id).where(*live)
+        .group_by(File.item_id).order_by(newest.desc().nulls_last(), File.item_id.desc())
+    )
+    items_total = db.scalar(select(func.count()).select_from(item_q.subquery())) or 0
+    item_ids = list(db.scalars(item_q.offset((page - 1) * page_size).limit(page_size)))
     items = {it.id: it for it in db.scalars(select(Item).where(Item.id.in_(item_ids)).options(selectinload(Item.files)))}
+    face_q = (
+        select(Face, File.item_id).join(File, File.id == Face.file_id).where(*live)
+        .order_by(File.taken_at.desc().nulls_last(), Face.id.desc())
+    )
+    faces_total = db.scalar(select(func.count(Face.id)).join(File, File.id == Face.file_id).where(*live)) or 0
+    faces = db.execute(face_q.offset((faces_page - 1) * faces_page_size).limit(faces_page_size)).all()
     names_ = Names(db)
     return {
         **_person_dict(p, person_counts(db)),
@@ -157,7 +185,13 @@ def get_person(person_id: int, db: Session = Depends(get_db), _: User = Depends(
             {"face_id": f.id, "file_id": f.file_id, "item_id": item_id, "assignment": f.assignment, "similarity": f.similarity}
             for f, item_id in faces
         ],
+        "faces_total": faces_total,
+        "faces_page": faces_page,
+        "faces_page_size": faces_page_size,
         "items": [item_dict(items[i], names_) for i in item_ids if i in items],
+        "items_total": items_total,
+        "page": page,
+        "page_size": page_size,
         "regrouping": _regrouping(db),
     }
 

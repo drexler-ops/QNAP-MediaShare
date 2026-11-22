@@ -752,3 +752,8 @@ a.person-card:hover { border-color: var(--accent); text-decoration: none; }
 .vctl-seek { flex: 1; min-width: 0; accent-color: #7b91ff; height: 28px; }
 .viewer-overlay.strip-on .vctl { bottom: calc(96px + env(safe-area-inset-bottom)); }
 .viewer-overlay.chrome-off .vctl, .viewer-overlay.chrome-off .vplay { opacity: 0; pointer-events: none; }
+
+/* ---------- pagination ---------- */
+.pager { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; margin: 20px 0 4px; }
+.pager-top { justify-content: flex-end; margin: 0 0 12px; }
+@media (max-width: 700px) { .pager-top { justify-content: center; } }

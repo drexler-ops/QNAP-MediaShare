@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, post, type QuarantineRow } from "../api";
 import { useViewer } from "../components/MediaViewer";
-import { Confirm, Loading, Thumb, useToast } from "../ui";
+import { Confirm, Loading, pageCount, Pager, pageSlice, Thumb, usePageParam, useToast } from "../ui";
 import { bytes, date } from "../util";
 
 interface QData {
@@ -13,12 +13,15 @@ interface QData {
   eligible: number;
 }
 
+const ROWS = 50;
+
 export default function Quarantine() {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery({ queryKey: ["quarantine"], queryFn: () => api<QData>("/api/quarantine") });
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [confirmPurge, setConfirmPurge] = useState(false);
+  const [page, setPage] = usePageParam();
   const viewer = useViewer();
 
   const refresh = () => {
@@ -72,6 +75,7 @@ export default function Quarantine() {
         </button>
       </div>
 
+      <Pager top page={Math.min(page, pageCount(d.items.length, ROWS))} pages={pageCount(d.items.length, ROWS)} onPage={setPage} />
       <div className="card">
         {d.items.length === 0 ? (
           <div className="empty">
@@ -99,12 +103,12 @@ export default function Quarantine() {
               </tr>
             </thead>
             <tbody>
-              {d.items.map((r) => (
+              {pageSlice(d.items, Math.min(page, pageCount(d.items.length, ROWS)), ROWS).map((r) => (
                 <tr key={r.item.id}>
                   <td>
                     <input type="checkbox" checked={selected.has(r.item.id)} onChange={() => toggle(r.item.id)} aria-label="Select" />
                   </td>
-                  <td style={{ width: 70, cursor: "pointer" }} onClick={() => viewer.open(d.items.map((x) => ({ item: x.item.id, file: x.item.primary.id })), d.items.indexOf(r))}>
+                  <td style={{ width: 70, cursor: "pointer" }} onClick={() => viewer.open(d.items.map((x) => ({ item: x.item.id, file: x.item.primary.id })), d.items.indexOf(r), { onClose: (pos) => setPage(Math.floor(pos / ROWS) + 1) })}>
                     <Thumb file={r.item.primary} size={52} live={r.item.is_live_photo} />
                   </td>
                   <td>
@@ -125,6 +129,7 @@ export default function Quarantine() {
           </table>
         )}
       </div>
+      <Pager page={Math.min(page, pageCount(d.items.length, ROWS))} pages={pageCount(d.items.length, ROWS)} onPage={setPage} />
 
       {confirmPurge && (
         <Confirm

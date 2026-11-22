@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, qs, type Facets, type ItemInfo } from "../api";
 import { useViewer } from "../components/MediaViewer";
 import AlbumPicker from "../components/AlbumPicker";
-import { Loading, Thumb, useTileSelection } from "../ui";
+import { Loading, Pager, Thumb, usePageParam, useTileSelection } from "../ui";
 import { date } from "../util";
 
 export interface BrowseFilters {
@@ -120,15 +120,22 @@ export function FilterBar({
   );
 }
 
+const PAGE_SIZE = 60;
+type ItemsPage = { total: number; page_size: number; items: ItemInfo[] };
+const fetchPage = (filters: BrowseFilters, page: number) =>
+  api<ItemsPage>(`/api/items${qs({ ...filters, page, page_size: PAGE_SIZE })}`);
+const toEntry = (x: ItemInfo) => ({ item: x.id, file: x.primary.id });
+
 export default function Browse() {
   const [filters, setFilters] = useState<BrowseFilters>(EMPTY);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = usePageParam();
+  const qc = useQueryClient();
   const viewer = useViewer();
   const [picking, setPicking] = useState(false);
   const facets = useQuery({ queryKey: ["facets"], queryFn: () => api<Facets>("/api/facets") });
   const items = useQuery({
     queryKey: ["items", filters, page],
-    queryFn: () => api<{ total: number; page_size: number; items: ItemInfo[] }>(`/api/items${qs({ ...filters, page, page_size: 60 })}`),
+    queryFn: () => fetchPage(filters, page),
     placeholderData: (prev) => prev,
   });
   const pages = items.data ? Math.max(1, Math.ceil(items.data.total / items.data.page_size)) : 1;
@@ -139,7 +146,16 @@ export default function Browse() {
   const { selecting, selected, setSelected, stop: stopSelecting } = sel;
   const clickTile = (idx: number, e: React.MouseEvent) => {
     if (sel.click(idx, e)) return;
-    viewer.open(list.map((x) => ({ item: x.id, file: x.primary.id })), idx);
+    // The viewer carries on into the next/previous pages; closing it lands on the page you ended on.
+    viewer.open(list.map(toEntry), idx, {
+      paging: {
+        page,
+        pageSize: PAGE_SIZE,
+        total: items.data?.total ?? list.length,
+        fetch: (p) => qc.fetchQuery({ queryKey: ["items", filters, p], queryFn: () => fetchPage(filters, p) }).then((d) => d.items.map(toEntry)),
+      },
+      onClose: (pos) => setPage(Math.floor(pos / PAGE_SIZE) + 1),
+    });
   };
 
   return (
@@ -165,6 +181,7 @@ export default function Browse() {
           <button className="btn sm primary" disabled={!selected.size} onClick={() => setPicking(true)}>📚 Add to album</button>
         </div>
       )}
+      <Pager top page={page} pages={pages} onPage={setPage} />
       {items.isLoading ? (
         <Loading />
       ) : list.length === 0 ? (
@@ -193,13 +210,7 @@ export default function Browse() {
           ))}
         </div>
       )}
-      {pages > 1 && (
-        <div className="row" style={{ justifyContent: "center", marginTop: 20 }}>
-          <button className="btn sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>‹ Prev</button>
-          <span className="muted small">Page {page} of {pages.toLocaleString()}</span>
-          <button className="btn sm" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next ›</button>
-        </div>
-      )}
+      <Pager page={page} pages={pages} onPage={setPage} />
       {picking && <AlbumPicker itemIds={[...selected]} onClose={() => setPicking(false)} onDone={stopSelecting} />}
     </>
   );

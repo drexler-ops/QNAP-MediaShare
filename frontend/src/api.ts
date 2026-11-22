@@ -278,6 +278,8 @@ export interface PeopleList {
   named: PersonSummary[];
   unnamed: PersonSummary[];
   unnamed_total: number;
+  unnamed_page: number;
+  unnamed_page_size: number;
   review: number;
   status: { enabled: boolean; models_ready: boolean; photos_total: number; photos_done: number; faces: number; regrouping?: boolean };
 }
@@ -285,6 +287,12 @@ export interface PeopleList {
 export interface PersonDetail extends PersonSummary {
   face_list: { face_id: number; file_id: number; item_id: number; assignment: string; similarity: number | null }[];
   items: ItemInfo[];
+  items_total: number;
+  page: number;
+  page_size: number;
+  faces_total: number;
+  faces_page: number;
+  faces_page_size: number;
   regrouping?: boolean;
 }
 
