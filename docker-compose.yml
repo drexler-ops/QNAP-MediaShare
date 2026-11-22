@@ -102,7 +102,7 @@ services:
   # COMPOSE_PROFILES=remote and TS_AUTHKEY in .env. Exposes ONLY this app (HTTPS, inside your
   # tailnet): no router ports, and tailnet devices can't reach QTS, file shares or anything else.
   tailscale:
-    image: tailscale/tailscale:v1.78.1
+    image: tailscale/tailscale:v1.82.5
     profiles: ["remote"]
     restart: unless-stopped
     hostname: ${TS_HOSTNAME:-photo-audit}
