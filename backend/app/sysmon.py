@@ -202,7 +202,12 @@ def write_heartbeat(name: str, processes: int) -> None:
         log.debug("heartbeat: %s", exc)
 
 
+_beats: dict[str, tuple[float, float]] = {}  # worker -> (its last "at" value, our clock when it changed)
+
+
 def workers() -> list[dict]:
+    """Heartbeats are judged by *when they change* on our clock, so a helper PC whose clock differs from
+    the NAS's still shows as online."""
     d = os.path.join(config.thumbs_root, STATUS_DIR)
     out = []
     try:
@@ -216,8 +221,17 @@ def workers() -> list[dict]:
                 hb = json.load(fh)
         except (OSError, ValueError):
             continue
-        age = now - float(hb.get("at", 0))
-        if age > 24 * 3600:
+        at = float(hb.get("at", 0))
+        prev = _beats.get(n)
+        if prev is None:
+            changed_at = now - max(now - at, 0)  # first look: trust the timestamp
+        elif prev[0] != at:
+            changed_at = now
+        else:
+            changed_at = prev[1]
+        _beats[n] = (at, changed_at)
+        age = now - changed_at
+        if age > 24 * 3600 and now - at > 24 * 3600:
             continue  # long gone (e.g. a helper PC that was shut down yesterday)
         hb["online"] = age < HEARTBEAT_SECONDS * 4
         hb["seen_seconds_ago"] = round(age)

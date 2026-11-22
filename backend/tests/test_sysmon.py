@@ -36,6 +36,21 @@ def test_worker_heartbeats(library):
     assert ws["nas"]["online"] and ws["nas"]["processes"] == 2 and ws["pc"]["processes"] == 8
 
 
+def test_helper_with_a_slow_clock_still_shows_online(library, monkeypatch):
+    """The NAS and a helper PC clocks can differ by minutes: a heartbeat that keeps changing is online."""
+    from app import sysmon
+
+    real = time.time
+    monkeypatch.setattr(sysmon.time, "time", lambda: real() - 1800)  # helper clock 30 min behind
+    sysmon.write_heartbeat("slowpc", 4)
+    monkeypatch.setattr(sysmon.time, "time", real)
+    assert not {w["name"]: w for w in sysmon.workers()}["slowpc"]["online"]  # looks stale at first
+    monkeypatch.setattr(sysmon.time, "time", lambda: real() - 1770)
+    sysmon.write_heartbeat("slowpc", 4)  # next beat 30 s later
+    monkeypatch.setattr(sysmon.time, "time", real)
+    assert {w["name"]: w for w in sysmon.workers()}["slowpc"]["online"]
+
+
 def test_system_endpoint_is_admin_only(session, users):
     with TestClient(create_app()) as c:
         login(c, "Alex")
