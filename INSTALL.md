@@ -236,6 +236,8 @@ Then run `ssh <nas-admin>@<nas> <app-dir>/qnap-compose.sh up -d`. This starts th
 - Test: create a share link in an album, then open it on a phone with **Wi-Fi off and Tailscale off**. It should load. The main app address should **not** load that way.
 - Links created earlier now show the public address too; there's no need to re-send anything.
 
+How it's wired: the share-only service runs as a sidecar inside the `tailscale-share` container's network (Tailscale's standard Docker layout), and Funnel forwards to it on `localhost`. If Docker ever restarts only the Tailscale container, the share service notices within ~45 seconds and restarts itself onto the new network, so public links recover on their own (including after a NAS reboot).
+
 Notes: Tailscale limits Funnel bandwidth (fine for family albums, not for streaming lots of 4K video to many people at once). The address ends in `.ts.net`. Revoke a link any time in the album's **Share** dialog; to turn public access off completely, remove `public` from `COMPOSE_PROFILES` and run `qnap-compose.sh up -d --remove-orphans`.
 
 ## Day-to-day

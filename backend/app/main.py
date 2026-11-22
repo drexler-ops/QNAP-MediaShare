@@ -27,6 +27,9 @@ async def lifespan(_app: FastAPI):
         from .db import init_db
 
         init_db()
+    from .netns_watchdog import start as start_netns_watchdog
+
+    start_netns_watchdog()  # no-op unless NETNS_WATCHDOG=1 (share-only sidecar)
     yield
 
 

@@ -48,3 +48,27 @@ def test_referrer_policy_lets_map_tiles_load_but_hides_paths(session):
         assert c.get("/api/health").headers["referrer-policy"] == "strict-origin-when-cross-origin"
     with TestClient(main_mod.create_app(share_only=True)) as pub:
         assert pub.get("/robots.txt").headers["referrer-policy"] == "no-referrer"
+
+
+def test_netns_watchdog_exits_when_network_is_gone(monkeypatch):
+    import app.netns_watchdog as wd
+
+    calls = []
+    monkeypatch.setattr(wd, "_reachable", lambda h, p, timeout=3.0: False)
+    monkeypatch.setattr(wd.time, "sleep", lambda s: None)
+    monkeypatch.setattr(wd.os, "_exit", lambda code: (calls.append(code), (_ for _ in ()).throw(SystemExit(code))))
+    try:
+        wd._loop("db", 5432, 0, 3)
+    except SystemExit:
+        pass
+    assert calls == [3]  # three consecutive misses -> exit so Docker restarts the container
+
+
+def test_netns_watchdog_is_off_by_default(monkeypatch):
+    import app.netns_watchdog as wd
+
+    monkeypatch.delenv("NETNS_WATCHDOG", raising=False)
+    started = []
+    monkeypatch.setattr(wd.threading, "Thread", lambda *a, **k: started.append(1))
+    wd.start()
+    assert started == []
