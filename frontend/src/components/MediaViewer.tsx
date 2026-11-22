@@ -336,7 +336,7 @@ function MediaViewer({
     if (!t || t.id !== e.pointerId || tapFingers.current.size) return;
     if (Date.now() - t.t > 300 || Math.hypot(e.clientX - t.x, e.clientY - t.y) > 10) return;
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    if (el?.closest("button, a, input, video, .face-tagger, .zoom-hud")) return;
+    if (el?.closest("button, a, input, video[controls], .face-tagger, .vctl")) return;
     tapPending.current = true;
     tapTimer.current = window.setTimeout(() => {
       tapPending.current = false;
@@ -448,9 +448,9 @@ function MediaViewer({
         ) : f.status === "purged" ? (
           <div className="viewer-msg">This file was permanently deleted.</div>
         ) : live && it?.companion ? (
-          <VideoPlayer key={`live-${it.companion.id}`} file={it.companion} autoPlay loop />
+          <VideoPlayer key={`live-${it.companion.id}`} file={it.companion} autoPlay loop customControls={touch} />
         ) : f.kind === "video" ? (
-          <VideoPlayer key={f.id} file={f} autoPlay />
+          <VideoPlayer key={f.id} file={f} autoPlay customControls={touch} />
         ) : (
           <ZoomImage
             key={f.id}
@@ -485,7 +485,7 @@ function MediaViewer({
       {showInfo && <InfoPanel it={it} faces={facesQ.data} onClose={onClose} publicMode={publicMode} />}
 
       {stripOn && <Filmstrip entries={entries} index={index} onIndex={onIndex} onHide={touch ? () => setStrip(false) : undefined} />}
-      {touch && many && !stripOn && f?.kind !== "video" && (
+      {touch && many && !stripOn && (
         <button className="strip-handle" onClick={() => setStrip(true)} aria-label="Show filmstrip (or swipe up from the bottom)">
           <span />
         </button>

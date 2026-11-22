@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type FileInfo } from "../api";
 import { thumbUrl } from "../util";
 import { useMediaUrls } from "../media-urls";
 import { Spinner } from "../ui";
 
 /** Plays a video, asking the server for a browser-friendly preview (HEVC is transcoded on demand). */
-export function VideoPlayer({ file, autoPlay, loop }: { file: FileInfo; autoPlay?: boolean; loop?: boolean }) {
+/**
+ * `customControls` (touch screens in the viewer): our own play/seek/mute bar instead of the browser's,
+ * because native controls swallow touches and would block swiping to the next item.
+ */
+export function VideoPlayer({ file, autoPlay, loop, customControls }: { file: FileInfo; autoPlay?: boolean; loop?: boolean; customControls?: boolean }) {
   const urls = useMediaUrls();
   const [status, setStatus] = useState<"checking" | "ready" | "processing" | "failed">("checking");
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +40,9 @@ export function VideoPlayer({ file, autoPlay, loop }: { file: FileInfo; autoPlay
     };
   }, [file.id, urls]);
 
+  if (status === "ready" && customControls) {
+    return <TouchVideo src={urls.preview(file.id)} poster={file.thumb ? urls.thumb(file.id, "l") : undefined} autoPlay={autoPlay} loop={loop} />;
+  }
   if (status === "ready") {
     return (
       <video
@@ -62,6 +69,81 @@ export function VideoPlayer({ file, autoPlay, loop }: { file: FileInfo; autoPlay
         )}
       </div>
     </div>
+  );
+}
+
+function clock(sec: number): string {
+  if (!isFinite(sec) || sec < 0) sec = 0;
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Video with a minimal overlay control bar; touches on the picture itself fall through to the viewer. */
+function TouchVideo({ src, poster, autoPlay, loop }: { src: string; poster?: string; autoPlay?: boolean; loop?: boolean }) {
+  const v = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [t, setT] = useState(0);
+  const [dur, setDur] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const stop = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation(); // not a swipe/tap on the stage
+  const toggle = () => {
+    const el = v.current;
+    if (!el) return;
+    if (el.paused) el.play().catch(() => {});
+    else el.pause();
+  };
+  return (
+    <>
+      <video
+        ref={v}
+        src={src}
+        poster={poster}
+        autoPlay={autoPlay}
+        loop={loop}
+        muted={muted}
+        playsInline
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onTimeUpdate={(e) => setT(e.currentTarget.currentTime)}
+        onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
+        onDurationChange={(e) => setDur(e.currentTarget.duration)}
+        onVolumeChange={(e) => setMuted(e.currentTarget.muted)}
+      />
+      {!playing && (
+        <button className="vplay" onPointerDown={stop} onClick={(e) => { e.stopPropagation(); toggle(); }} aria-label="Play">
+          <svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
+        </button>
+      )}
+      <div className="vctl" onPointerDown={stop} onPointerUp={stop} onClick={stop}>
+        <button className="vctl-btn" onClick={toggle} aria-label={playing ? "Pause" : "Play"}>
+          {playing ? (
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M7 5h4v14H7zM13 5h4v14h-4z" fill="currentColor" /></svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
+          )}
+        </button>
+        <span className="vctl-time">{clock(t)}</span>
+        <input
+          className="vctl-seek"
+          type="range"
+          min={0}
+          max={dur || 0}
+          step={0.05}
+          value={Math.min(t, dur || 0)}
+          onChange={(e) => {
+            const el = v.current;
+            if (el) el.currentTime = Number(e.target.value);
+            setT(Number(e.target.value));
+          }}
+          aria-label="Seek"
+        />
+        <span className="vctl-time">{clock(dur)}</span>
+        <button className="vctl-btn" onClick={() => setMuted((m) => !m)} aria-label={muted ? "Unmute" : "Mute"}>
+          {muted ? "🔇" : "🔊"}
+        </button>
+      </div>
+    </>
   );
 }
 

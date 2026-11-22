@@ -717,3 +717,21 @@ a.person-card:hover { border-color: var(--accent); text-decoration: none; }
 /* viewport-fit=cover (so the viewer can use the whole landscape screen): keep the app clear of notches */
 .app { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); box-sizing: border-box; }
 @media (max-width: 1023px) { .sidebar { padding-left: max(10px, env(safe-area-inset-left)); } } /* drawer is fixed, outside .app padding */
+
+/* ---------- touch video controls (viewer) ---------- */
+.vplay {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 3;
+  width: 68px; height: 68px; border-radius: 50%; border: 0; padding: 0 0 0 4px; display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); color: #fff;
+}
+.vctl {
+  position: absolute; left: 12px; right: 12px; bottom: calc(30px + env(safe-area-inset-bottom)); z-index: 3;
+  display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 14px;
+  background: rgba(0, 0, 0, 0.5); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  color: #fff; font-size: 13px; font-variant-numeric: tabular-nums; touch-action: none; transition: opacity 0.2s, bottom 0.2s;
+}
+.vctl-btn { width: 36px; height: 36px; flex: none; display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: #fff; font-size: 17px; }
+.vctl-time { flex: none; min-width: 36px; text-align: center; }
+.vctl-seek { flex: 1; min-width: 0; accent-color: #7b91ff; height: 28px; }
+.viewer-overlay.strip-on .vctl { bottom: calc(96px + env(safe-area-inset-bottom)); }
+.viewer-overlay.chrome-off .vctl, .viewer-overlay.chrome-off .vplay { opacity: 0; pointer-events: none; }
