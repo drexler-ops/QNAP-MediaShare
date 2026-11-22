@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, post, type Me, type Settings, type UserRow } from "../api";
 import { Confirm, Loading, useToast } from "../ui";
 import { bytes, date } from "../util";
+import NasResources from "../components/NasResources";
 
 interface Status {
   jobs: Record<string, Record<string, number>>;
@@ -24,6 +25,7 @@ export default function SettingsPage({ me }: { me: Me }) {
         <Account me={me} />
         {me.is_admin && <Users me={me} />}
         <Detection />
+        {me.is_admin && <NasResources />}
         <SystemStatus />
       </div>
     </>

@@ -777,3 +777,28 @@ a.person-card:hover { border-color: var(--accent); text-decoration: none; }
 }
 .viewer-overlay.touch .vnote { top: calc(64px + env(safe-area-inset-top)); }
 @keyframes vnote-fade { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
+
+/* ---- Settings: NAS resources ---- */
+.res-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.res-card { border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.res-title { font-weight: 600; color: var(--text-2); font-size: 13px; }
+.res-num { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.res-num span { font-size: 14px; font-weight: 500; color: var(--text-2); }
+.meter-wrap { display: grid; gap: 4px; }
+.meter-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.meter { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.meter > div { height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.4s ease; }
+.meter > div.warn, .core > div.warn { background: var(--warn); }
+.meter > div.crit, .core > div.crit { background: var(--delete); }
+.lvl { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.lvl.warn::first-letter { color: var(--warn); }
+.lvl.crit::first-letter { color: var(--delete); }
+.spark svg { display: block; width: 100%; height: 56px; overflow: visible; cursor: crosshair; }
+.spark .grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; stroke-dasharray: 3 3; }
+.spark .area { fill: var(--accent-soft); }
+.spark .ln { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; stroke-linejoin: round; stroke-linecap: round; }
+.spark .cross { stroke: var(--text-3); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.spark-foot { min-height: 18px; }
+.cores { display: flex; gap: 4px; height: 36px; align-items: flex-end; }
+.core { flex: 1; height: 100%; background: var(--surface-2); border-radius: 4px; display: flex; align-items: flex-end; overflow: hidden; }
+.core > div { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; transition: height 0.4s ease; }

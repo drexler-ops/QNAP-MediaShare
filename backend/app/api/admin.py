@@ -11,7 +11,7 @@ from ..audit import audit
 from ..jobs import enqueue
 from ..models import DupGroup, File, Job, User
 from ..settings_store import get_settings, update_settings
-from .deps import current_user, get_db
+from .deps import current_user, get_db, require_admin
 from .serialize import iso
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -108,3 +108,21 @@ def write_settings(body: dict[str, Any], db: Session = Depends(get_db), user: Us
     elif any(k.startswith("face_") for k in changed):
         enqueue(db, "face_group", unique=True)
     return after
+
+
+@router.get("/system")
+def system(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """Live NAS resources for the admin System monitor (polled every few seconds while it is open)."""
+    from .. import previews, sysmon
+
+    snap = sysmon.snapshot()
+    active: dict[str, dict[str, int]] = {}
+    for t, s, c in db.execute(
+        select(Job.type, Job.state, func.count(Job.id)).where(Job.state.in_(("queued", "running"))).group_by(Job.type, Job.state)
+    ):
+        active.setdefault(t, {})[s] = c
+    with previews._lock:
+        converting = sum(1 for st, _e in previews._state.values() if st in ("queued", "running"))
+    snap["jobs"] = active
+    snap["converting_on_demand"] = converting
+    return snap

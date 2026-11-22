@@ -121,8 +121,13 @@ def main() -> None:
         "worker %s: %s processes, scheduler %s",
         config.worker_name, len(procs), "on" if config.scheduler_enabled else "off",
     )
-    last_tick = 0.0
+    from .sysmon import HEARTBEAT_SECONDS, write_heartbeat
+
+    last_tick = last_beat = 0.0
     while not stop:
+        if time.time() - last_beat >= HEARTBEAT_SECONDS:
+            last_beat = time.time()
+            write_heartbeat(config.worker_name, len(procs))
         for i, p in list(procs.items()):
             if not p.is_alive():
                 log.warning("process %s died (exit %s); restarting", p.name, p.exitcode)

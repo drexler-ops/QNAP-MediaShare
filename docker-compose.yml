@@ -52,10 +52,15 @@ services:
       MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
       PUBLIC_SHARE_URL: ${PUBLIC_SHARE_URL:-}
       RUN_MIGRATIONS: "true"
+      # Optional extra volume shown (free space only) in Settings -> NAS resources
+      EXTRA_VOLUME: ${EXTRA_VOLUME_PATH:-}
+      EXTRA_VOLUME_LABEL: ${EXTRA_VOLUME_LABEL:-}
     volumes:
       - ${LIBRARY_PATH:?set LIBRARY_PATH in .env}:/library
       - ${THUMBS_PATH:?set THUMBS_PATH in .env}:/thumbs
       - models:/models:ro
+      # Read-only, used only to report free space. Unset: falls back to the thumbs folder (same volume, no extra row).
+      - ${EXTRA_VOLUME_PATH:-${THUMBS_PATH}}:/volumes/extra:ro
     ports:
       - "${APP_PORT:-8090}:8080"
     mem_limit: ${API_MEM_LIMIT:-1g}
