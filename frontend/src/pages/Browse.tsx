@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs, type Facets, type ItemInfo } from "../api";
 import { useViewer } from "../components/MediaViewer";
+import AlbumPicker from "../components/AlbumPicker";
 import { Loading, Thumb } from "../ui";
 import { date } from "../util";
 
@@ -98,6 +99,11 @@ export default function Browse() {
   const [filters, setFilters] = useState<BrowseFilters>(EMPTY);
   const [page, setPage] = useState(1);
   const viewer = useViewer();
+  const [selecting, setSelecting] = useState(false);
+  // Selection survives paging, so you can collect photos across several pages.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const [picking, setPicking] = useState(false);
   const facets = useQuery({ queryKey: ["facets"], queryFn: () => api<Facets>("/api/facets") });
   const items = useQuery({
     queryKey: ["items", filters, page],
@@ -105,32 +111,68 @@ export default function Browse() {
     placeholderData: (prev) => prev,
   });
   const pages = items.data ? Math.max(1, Math.ceil(items.data.total / items.data.page_size)) : 1;
+  const list = items.data?.items ?? [];
+
+  const clickTile = (idx: number, e: React.MouseEvent) => {
+    if (!selecting) {
+      viewer.open(list.map((x) => ({ item: x.id, file: x.primary.id })), idx);
+      return;
+    }
+    const id = list[idx].id;
+    setSelected((cur) => {
+      const n = new Set(cur);
+      if (e.shiftKey && anchor !== null) {
+        const lo = Math.min(anchor, idx);
+        const hi = Math.max(anchor, idx);
+        for (let i = lo; i <= hi; i++) n.add(list[i].id);
+      } else if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+    setAnchor(idx);
+  };
+  const stopSelecting = () => {
+    setSelecting(false);
+    setSelected(new Set());
+    setAnchor(null);
+  };
 
   return (
     <>
       <div className="page-head">
         <h1>Browse</h1>
         <span className="muted">{items.data ? `${items.data.total.toLocaleString()} items` : ""}</span>
+        <div className="spacer" />
+        <button className={selecting ? "btn primary" : "btn"} onClick={() => (selecting ? stopSelecting() : setSelecting(true))}>
+          {selecting ? "Done" : "Select"}
+        </button>
       </div>
       <FilterBar value={filters} onChange={(v) => { setFilters(v); setPage(1); }} facets={facets.data} />
+      {selecting && (
+        <div className="card pad row select-bar">
+          <strong>{selected.size} selected</strong>
+          <span className="small faint">Click to select · Shift-click for a range</span>
+          <button className="btn sm" onClick={() => setSelected((cur) => new Set([...cur, ...list.map((x) => x.id)]))}>Select page</button>
+          <button className="btn sm" disabled={!selected.size} onClick={() => setSelected(new Set())}>Clear</button>
+          <div className="grow" />
+          <button className="btn sm primary" disabled={!selected.size} onClick={() => setPicking(true)}>📚 Add to album</button>
+        </div>
+      )}
       {items.isLoading ? (
         <Loading />
-      ) : items.data?.items.length === 0 ? (
+      ) : list.length === 0 ? (
         <div className="card empty">No files match these filters.</div>
       ) : (
         <div className="grid">
-          {items.data?.items.map((it, idx) => (
-            <div
-              key={it.id}
-              className="tile"
-              onClick={() => viewer.open(items.data!.items.map((x) => ({ item: x.id, file: x.primary.id })), idx)}
-            >
+          {list.map((it, idx) => (
+            <div key={it.id} className={selecting && selected.has(it.id) ? "tile selected" : "tile"} onClick={(e) => clickTile(idx, e)}>
               <div style={{ position: "relative" }}>
                 <Thumb file={it.primary} size="100%" live={it.is_live_photo} dim={it.primary.status !== "active"} />
                 <div style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 4 }}>
                   {it.in_group && <span className="badge accent" title="Part of a duplicate group">DUP</span>}
                   {!it.primary.has_exif && <span className="badge warn" title="No EXIF metadata">no EXIF</span>}
                 </div>
+                {selecting && <span className="tile-check">{selected.has(it.id) ? "✓" : ""}</span>}
               </div>
               <div className="tile-meta" title={it.primary.path}>
                 {it.owner} · {date(it.primary.taken_at, false)}
@@ -146,6 +188,7 @@ export default function Browse() {
           <button className="btn sm" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next ›</button>
         </div>
       )}
+      {picking && <AlbumPicker itemIds={[...selected]} onClose={() => setPicking(false)} onDone={stopSelecting} />}
     </>
   );
 }

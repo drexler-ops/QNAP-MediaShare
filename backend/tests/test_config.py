@@ -21,8 +21,8 @@ def test_public_config_custom_and_map_off(session, monkeypatch):
     monkeypatch.setattr(main_mod, "config", Config())
     with TestClient(main_mod.create_app()) as c:
         cfg = c.get("/api/config").json()
-    assert cfg == {"app_name": "Smith Family Photos", "map_tile_url": None,
-                   "map_attribution": "© OpenStreetMap contributors"}
+    assert cfg["app_name"] == "Smith Family Photos" and cfg["map_tile_url"] is None
+    assert cfg["map_attribution"] == "© OpenStreetMap contributors"
 
 
 @pytest.mark.parametrize("bad", ["quarantine", "a/b", ".x/y"])

@@ -43,6 +43,8 @@ export interface AppConfig {
   app_name: string;
   map_tile_url: string | null;
   map_attribution: string;
+  share_only?: boolean;
+  share_base_url?: string | null;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -50,6 +52,66 @@ export const DEFAULT_CONFIG: AppConfig = {
   map_tile_url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
   map_attribution: "© OpenStreetMap contributors",
 };
+
+export interface AlbumSummary {
+  id: number;
+  title: string;
+  description: string | null;
+  owner: string | null;
+  owner_id: number;
+  role: "owner" | "editor" | "viewer";
+  count: number;
+  cover_file_id: number | null;
+  shared_with: number;
+  active_links: number;
+  updated_at: string | null;
+}
+
+export interface ShareLinkInfo {
+  id: number;
+  url: string;
+  token: string;
+  state: "active" | "expired" | "revoked";
+  created_by: string | null;
+  created_at: string | null;
+  expires_at: string | null;
+  has_password: boolean;
+  allow_download: boolean;
+  view_count: number;
+  last_viewed_at: string | null;
+}
+
+export interface AlbumDetail extends AlbumSummary {
+  cover_item_id: number | null;
+  items: (ItemInfo & { added_by: string | null; added_at: string | null })[];
+  members: { user_id: number; name: string | null; role: "viewer" | "editor" }[];
+  links: ShareLinkInfo[];
+}
+
+export interface PublicItem {
+  item_id: number;
+  file_id: number;
+  kind: "image" | "video";
+  name: string;
+  ext: string;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  size: number;
+  taken_at: string | null;
+  camera: string | null;
+  thumb: boolean;
+  live_file_id: number | null;
+}
+
+export interface PublicAlbum {
+  app_name: string;
+  title: string;
+  description: string | null;
+  allow_download: boolean;
+  expires_at: string | null;
+  items: PublicItem[];
+}
 
 export interface Me {
   id: number;
@@ -133,6 +195,7 @@ export interface GroupMember extends ItemInfo {
   decision: DecisionInfo | null;
   deleting_elsewhere: boolean;
   other_groups: number[];
+  albums: number;
 }
 
 export interface GroupDetail {

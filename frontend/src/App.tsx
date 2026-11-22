@@ -1,8 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { api, ApiError, post, type Me } from "./api";
 import { Brand, Icons, Loading, useAppConfig } from "./ui";
-import { ViewerProvider } from "./components/MediaViewer";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Review from "./pages/Review";
@@ -12,8 +11,24 @@ import Pending from "./pages/Pending";
 import Quarantine from "./pages/Quarantine";
 import Audit from "./pages/Audit";
 import SettingsPage from "./pages/Settings";
+import Albums from "./pages/Albums";
+import AlbumPage from "./pages/AlbumPage";
+import PublicAlbum from "./pages/PublicAlbum";
 
 export default function App() {
+  const location = useLocation();
+  // Public share links (/s/<token>) never need an account.
+  if (location.pathname.startsWith("/s/")) {
+    return (
+      <Routes>
+        <Route path="/s/:token" element={<PublicAlbum />} />
+      </Routes>
+    );
+  }
+  return <SignedInApp />;
+}
+
+function SignedInApp() {
   const me = useQuery({
     queryKey: ["me"],
     queryFn: () => api<Me>("/api/auth/me"),
@@ -40,6 +55,7 @@ function Shell({ me }: { me: Me }) {
     { to: "/pending", label: "Approvals", icon: Icons.pending, badge: pending.data?.count },
     { to: "/quarantine", label: "Quarantine", icon: Icons.quarantine },
     { to: "/browse", label: "Browse", icon: Icons.browse },
+    { to: "/albums", label: "Albums", icon: Icons.albums },
     ...(cfg.map_tile_url ? [{ to: "/map", label: "Map", icon: Icons.map }] : []),
     { to: "/audit", label: "Audit log", icon: Icons.audit },
     { to: "/settings", label: "Settings", icon: Icons.settings },
@@ -53,7 +69,6 @@ function Shell({ me }: { me: Me }) {
   };
 
   return (
-    <ViewerProvider>
     <div className="app">
       <nav className="sidebar" aria-label="Main">
         <Brand />
@@ -83,6 +98,8 @@ function Shell({ me }: { me: Me }) {
           <Route path="/pending" element={<Pending me={me} />} />
           <Route path="/quarantine" element={<Quarantine />} />
           <Route path="/browse" element={<Browse />} />
+          <Route path="/albums" element={<Albums />} />
+          <Route path="/albums/:id" element={<AlbumPage me={me} />} />
           {cfg.map_tile_url && <Route path="/map" element={<MapPage />} />}
           <Route path="/audit" element={<Audit />} />
           <Route path="/settings" element={<SettingsPage me={me} />} />
@@ -90,6 +107,5 @@ function Shell({ me }: { me: Me }) {
         </Routes>
       </main>
     </div>
-    </ViewerProvider>
   );
 }

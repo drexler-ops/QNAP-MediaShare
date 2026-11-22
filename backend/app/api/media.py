@@ -1,4 +1,8 @@
-"""Thumbnails, in-app viewing (full-size images, playable videos) and explicit downloads."""
+"""Thumbnails, in-app viewing (full-size images, playable videos) and explicit downloads.
+
+The serve_* helpers are shared with the public share-link routes (api/public.py), which apply
+their own access checks before calling them.
+"""
 from __future__ import annotations
 
 import os
@@ -32,17 +36,7 @@ def _file(db: Session, file_id: int) -> File:
     return f
 
 
-@router.get("/{file_id}/thumb")
-def thumb(file_id: int, size: str = "s", db: Session = Depends(get_db), _: User = Depends(current_user)):
-    if size not in ("s", "l"):
-        raise HTTPException(400, "size must be s or l")
-    path = thumb_path(file_id, size)
-    if not os.path.isfile(path):
-        raise HTTPException(404, "Thumbnail not ready")
-    return FileResponse(path, media_type="image/webp", headers=CACHE)
-
-
-def _source(f: File) -> str:
+def source_path(f: File) -> str:
     if f.status == "purged":
         raise HTTPException(410, "This file was permanently deleted")
     path = abs_path(f.path)
@@ -51,13 +45,19 @@ def _source(f: File) -> str:
     return path
 
 
-@router.get("/{file_id}/full")
-def full(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    """Full-resolution image the browser can display inline (for the in-app viewer; never a download)."""
-    f = _file(db, file_id)
+def serve_thumb(file_id: int, size: str) -> FileResponse:
+    if size not in ("s", "l"):
+        raise HTTPException(400, "size must be s or l")
+    path = thumb_path(file_id, size)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "Thumbnail not ready")
+    return FileResponse(path, media_type="image/webp", headers=CACHE)
+
+
+def serve_full(f: File) -> FileResponse:
     if f.kind != "image":
         raise HTTPException(400, "Not an image")
-    src = _source(f)
+    src = source_path(f)
     if f.ext in BROWSER_SAFE_IMAGE:
         return FileResponse(src, media_type=BROWSER_SAFE_IMAGE[f.ext], headers=CACHE)
     out = full_path(f.id)
@@ -71,11 +71,8 @@ def full(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_
     return FileResponse(out, media_type="image/jpeg", headers=CACHE)
 
 
-@router.get("/{file_id}/original")
-def original(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    """The untouched original file, always as a download (viewing happens in-app via /full and /preview)."""
-    f = _file(db, file_id)
-    src = _source(f)
+def serve_download(f: File) -> FileResponse:
+    src = source_path(f)
     name = posixpath.basename(f.original_path or f.path)
     return FileResponse(src, media_type=f.mime or "application/octet-stream", filename=name,
                         content_disposition_type="attachment")
@@ -85,10 +82,8 @@ def _direct_playable(f: File) -> bool:
     return f.codec in BROWSER_SAFE_VIDEO and f.ext in ("mp4", "m4v", "mov")
 
 
-@router.get("/{file_id}/preview/status")
-def preview_status(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+def preview_state(db: Session, f: File) -> dict:
     """Is a browser-playable version ready? Queues a background transcode (HEVC etc.) on first ask."""
-    f = _file(db, file_id)
     if f.kind != "video":
         raise HTTPException(400, "Not a video")
     if (_direct_playable(f) and os.path.isfile(abs_path(f.path))) or os.path.isfile(preview_path(f.id)):
@@ -105,9 +100,7 @@ def preview_status(file_id: int, db: Session = Depends(get_db), _: User = Depend
     return {"status": "processing"}
 
 
-@router.get("/{file_id}/preview")
-def preview(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    f = _file(db, file_id)
+def serve_preview(f: File) -> FileResponse:
     if f.kind != "video":
         raise HTTPException(400, "Not a video")
     if _direct_playable(f) and os.path.isfile(abs_path(f.path)):
@@ -116,3 +109,33 @@ def preview(file_id: int, db: Session = Depends(get_db), _: User = Depends(curre
     if os.path.isfile(out):
         return FileResponse(out, media_type="video/mp4", headers=CACHE)
     raise HTTPException(404, "Preview not ready")
+
+
+# --- signed-in routes -----------------------------------------------------------------------
+
+
+@router.get("/{file_id}/thumb")
+def thumb(file_id: int, size: str = "s", _: User = Depends(current_user)):
+    return serve_thumb(file_id, size)
+
+
+@router.get("/{file_id}/full")
+def full(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    """Full-resolution image the browser can display inline (for the in-app viewer; never a download)."""
+    return serve_full(_file(db, file_id))
+
+
+@router.get("/{file_id}/original")
+def original(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    """The untouched original file, always as a download (viewing happens in-app via /full and /preview)."""
+    return serve_download(_file(db, file_id))
+
+
+@router.get("/{file_id}/preview/status")
+def preview_status(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    return preview_state(db, _file(db, file_id))
+
+
+@router.get("/{file_id}/preview")
+def preview(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    return serve_preview(_file(db, file_id))

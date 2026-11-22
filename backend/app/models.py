@@ -243,3 +243,77 @@ class Face(Base):
     # v2 will switch this to a pgvector column.
     embedding: Mapped[list | None] = mapped_column(JSON, nullable=True)
     person_id: Mapped[int | None] = mapped_column(ForeignKey("people.id"), nullable=True, index=True)
+
+
+# --- albums & sharing ---------------------------------------------------------------------
+
+
+class Album(Base):
+    """A hand-picked collection of items. Items are referenced, never copied."""
+
+    __tablename__ = "albums"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    cover_item_id: Mapped[int | None] = mapped_column(ForeignKey("items.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    owner: Mapped[User] = relationship()
+    items: Mapped[list["AlbumItem"]] = relationship(
+        back_populates="album", cascade="all, delete-orphan", order_by="AlbumItem.position"
+    )
+    members: Mapped[list["AlbumMember"]] = relationship(back_populates="album", cascade="all, delete-orphan")
+    links: Mapped[list["ShareLink"]] = relationship(back_populates="album", cascade="all, delete-orphan")
+
+
+class AlbumItem(Base):
+    __tablename__ = "album_items"
+    __table_args__ = (UniqueConstraint("album_id", "item_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), index=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), index=True)
+    position: Mapped[float] = mapped_column(Float, default=0.0)
+    added_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+    album: Mapped[Album] = relationship(back_populates="items")
+    item: Mapped[Item] = relationship()
+
+
+class AlbumMember(Base):
+    """Another app user the owner shared the album with. role: viewer | editor (can add/remove/reorder)."""
+
+    __tablename__ = "album_members"
+    __table_args__ = (UniqueConstraint("album_id", "user_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(8), default="viewer")
+
+    album: Mapped[Album] = relationship(back_populates="members")
+    user: Mapped[User] = relationship()
+
+
+class ShareLink(Base):
+    """Public read-only link to an album for people without an account."""
+
+    __tablename__ = "share_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    album_id: Mapped[int] = mapped_column(ForeignKey("albums.id", ondelete="CASCADE"), index=True)
+    token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    allow_download: Mapped[bool] = mapped_column(Boolean, default=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    view_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    album: Mapped[Album] = relationship(back_populates="links")

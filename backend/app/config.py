@@ -44,6 +44,11 @@ class Config:
     map_attribution: str = field(
         default_factory=lambda: os.environ.get("MAP_ATTRIBUTION", "").strip() or "© OpenStreetMap contributors"
     )
+    # Share-only mode: serve nothing but public album links (/s/<token>) and their media.
+    # Used for the internet-facing container; the full app stays private.
+    share_only: bool = field(default_factory=lambda: _bool(os.environ.get("SHARE_ONLY"), False))
+    # Public base URL for share links (e.g. https://photos-share.example.ts.net). Empty = same as the app.
+    public_share_url: str = field(default_factory=lambda: os.environ.get("PUBLIC_SHARE_URL", "").strip().rstrip("/"))
     # Root of the media library inside the container (the NAS share is mounted here).
     library_root: str = field(default_factory=lambda: os.environ.get("LIBRARY_ROOT", "/library"))
     # Where thumbnails / video previews are written (shared between NAS + PC workers).

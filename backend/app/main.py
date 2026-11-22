@@ -9,11 +9,12 @@ import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from .api import admin, auth_routes, decisions, groups, items, media, users
+from .api import admin, albums, auth_routes, decisions, groups, items, media, public, users
+from .albums import AlbumError
 from .config import config
 from .deletion.workflow import WorkflowError
 
@@ -29,22 +30,50 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(title=config.app_name,lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    # Share tokens live in URLs: never leak them to other sites via the Referer header.
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+def create_app(share_only: bool | None = None) -> FastAPI:
+    """share_only=True builds the internet-facing variant: public album links only, no sign-in, no API."""
+    share_only = config.share_only if share_only is None else share_only
+    app = FastAPI(
+        title=config.app_name,
+        lifespan=lifespan,
+        docs_url=None if share_only else "/api/docs",
+        openapi_url=None if share_only else "/api/openapi.json",
+    )
     app.add_middleware(
         SessionMiddleware,
         secret_key=config.secret_key,
-        session_cookie="photoaudit_session",
+        session_cookie="photoaudit_share" if share_only else "photoaudit_session",
         max_age=60 * 60 * 24 * 30,
         same_site="lax",
         https_only=False,
     )
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for k, v in SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        return response
+
     @app.exception_handler(WorkflowError)
     async def workflow_error(_req: Request, exc: WorkflowError):
         return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
-    for module in (auth_routes, users, items, media, groups, decisions, admin):
+    @app.exception_handler(AlbumError)
+    async def album_error(_req: Request, exc: AlbumError):
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+
+    modules = (public,) if share_only else (auth_routes, users, items, media, groups, decisions, admin, albums, public)
+    for module in modules:
         app.include_router(module.router)
 
     @app.get("/api/health")
@@ -59,6 +88,8 @@ def create_app() -> FastAPI:
             "app_name": config.app_name,
             "map_tile_url": None if tiles.lower() in ("off", "none", "disabled") else tiles,
             "map_attribution": config.map_attribution,
+            "share_only": share_only,
+            "share_base_url": config.public_share_url or None,
         }
 
     dist = config.frontend_dist
@@ -69,6 +100,11 @@ def create_app() -> FastAPI:
     def spa(full_path: str):
         if full_path.startswith("api/"):
             return JSONResponse({"detail": "Not found"}, status_code=404)
+        if share_only and not (full_path.startswith("s/") or full_path in ("favicon.ico", "robots.txt")):
+            # The public container only shows share links; everything else simply doesn't exist here.
+            return JSONResponse({"detail": "Not found"}, status_code=404)
+        if full_path == "robots.txt":
+            return PlainTextResponse("User-agent: *" + chr(10) + "Disallow: /" + chr(10))
         candidate = os.path.normpath(os.path.join(dist, full_path))
         if full_path and candidate.startswith(os.path.normpath(dist)) and os.path.isfile(candidate):
             return FileResponse(candidate)

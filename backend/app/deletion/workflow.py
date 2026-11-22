@@ -18,6 +18,7 @@ from ..audit import audit
 from ..models import ACTIVE_STATES, DELETE_STATES, Decision, DupGroup, DupGroupMember, File, Item, User
 from ..scanner.thumbs import delete_thumbs
 from . import quarantine
+from .. import albums as album_service
 
 log = logging.getLogger(__name__)
 
@@ -235,6 +236,9 @@ def approve(session: Session, user: User, decision_ids: list[int]) -> dict[str, 
             other.state, other.approved_by, other.approved_at = "quarantined", user.id, now
         audit(session, user.id, "approve_quarantine", "item", d.item_id, decision_id=did,
               files=[{"from": f.original_path, "to": f.path} for f, _ in moved])
+        session.flush()
+        # Albums that contained the deleted copy now show the copy being kept instead.
+        album_service.remap_deleted_item(session, d.item_id, d.group_id, user.id)
         done.append(did)
         for gid in _groups_of_item(session, d.item_id):
             g = session.get(DupGroup, gid)

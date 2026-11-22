@@ -9,6 +9,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..audit import audit
+from ..albums import album_counts
 from ..deletion import workflow
 from ..models import ACTIVE_STATES, DELETE_STATES, Decision, DupGroup, DupGroupMember, File, Item, User
 from .deps import current_user, get_db
@@ -150,6 +151,7 @@ def group_detail(db: Session, g: DupGroup) -> dict:
     ):
         other_groups.setdefault(iid, []).append(gid)
 
+    in_albums = album_counts(db, item_ids)
     members = []
     for m in sorted(g.members, key=lambda m: (not m.suggested_keep, -m.score, m.item_id)):
         it = items.get(m.item_id)
@@ -169,6 +171,7 @@ def group_detail(db: Session, g: DupGroup) -> dict:
             } if d else None,
             "deleting_elsewhere": m.item_id in deleting_elsewhere,
             "other_groups": other_groups.get(m.item_id, []),
+            "albums": in_albums.get(m.item_id, 0),
         })
     return {"id": g.id, "type": g.type, "status": g.status, "confidence": g.confidence, "members": members}
 

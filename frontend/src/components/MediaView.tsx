@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, type FileInfo } from "../api";
 import { thumbUrl } from "../util";
+import { useMediaUrls } from "../media-urls";
 import { Spinner } from "../ui";
 
 /** Plays a video, asking the server for a browser-friendly preview (HEVC is transcoded on demand). */
 export function VideoPlayer({ file, autoPlay, loop }: { file: FileInfo; autoPlay?: boolean; loop?: boolean }) {
+  const urls = useMediaUrls();
   const [status, setStatus] = useState<"checking" | "ready" | "processing" | "failed">("checking");
   const [error, setError] = useState<string | null>(null);
 
@@ -14,7 +16,7 @@ export function VideoPlayer({ file, autoPlay, loop }: { file: FileInfo; autoPlay
     const check = async () => {
       try {
         const r = await api<{ status: "ready" | "processing" | "failed"; error?: string }>(
-          `/api/files/${file.id}/preview/status`,
+          urls.previewStatus(file.id),
         );
         if (!alive) return;
         setStatus(r.status);
@@ -32,13 +34,13 @@ export function VideoPlayer({ file, autoPlay, loop }: { file: FileInfo; autoPlay
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [file.id]);
+  }, [file.id, urls]);
 
   if (status === "ready") {
     return (
       <video
-        src={`/api/files/${file.id}/preview`}
-        poster={file.thumb ? thumbUrl(file.id, "l") : undefined}
+        src={urls.preview(file.id)}
+        poster={file.thumb ? urls.thumb(file.id, "l") : undefined}
         controls
         autoPlay={autoPlay}
         loop={loop}
@@ -49,7 +51,7 @@ export function VideoPlayer({ file, autoPlay, loop }: { file: FileInfo; autoPlay
   }
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", placeItems: "center" }}>
-      {file.thumb && <img src={thumbUrl(file.id, "l")} alt="" style={{ opacity: 0.5 }} />}
+      {file.thumb && <img src={urls.thumb(file.id, "l")} alt="" style={{ opacity: 0.5 }} />}
       <div className="badge" style={{ position: "absolute", gap: 8, padding: "6px 12px" }}>
         {status === "failed" ? (
           <>⚠ {error}</>

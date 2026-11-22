@@ -48,6 +48,7 @@ services:
       APP_NAME: ${APP_NAME:-}
       MAP_TILE_URL: ${MAP_TILE_URL:-}
       MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
+      PUBLIC_SHARE_URL: ${PUBLIC_SHARE_URL:-}
       RUN_MIGRATIONS: "true"
     volumes:
       - ${LIBRARY_PATH:?set LIBRARY_PATH in .env}:/library
@@ -72,6 +73,30 @@ services:
       - ${LIBRARY_PATH}:/library
       - ${THUMBS_PATH}:/thumbs
     mem_limit: ${WORKER_MEM_LIMIT:-2g}
+
+  # Optional public share-link service (COMPOSE_PROFILES=public). Same image in share-only mode:
+  # serves ONLY /s/<token> album pages and their media; no sign-in, no API, no other pages.
+  # This is the only thing that should ever face the internet.
+  share:
+    image: photo-audit:latest
+    profiles: ["public"]
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_started }
+    environment:
+      <<: *app-env
+      SECRET_KEY: ${SECRET_KEY}
+      APP_NAME: ${APP_NAME:-}
+      SHARE_ONLY: "true"
+      SKIP_INIT_DB: "1"
+    volumes:
+      - ${LIBRARY_PATH}:/library:ro
+      - ${THUMBS_PATH}:/thumbs
+    ports:
+      # Local testing only; the public route is the Tailscale Funnel container (no host port needed).
+      - "${SHARE_PUBLISH:-127.0.0.1:8091}:8080"
+    mem_limit: ${SHARE_MEM_LIMIT:-512m}
 
   # Optional private remote access for app users (family) via Tailscale. Enable with
   # COMPOSE_PROFILES=remote and TS_AUTHKEY in .env. Exposes ONLY this app (HTTPS, inside your

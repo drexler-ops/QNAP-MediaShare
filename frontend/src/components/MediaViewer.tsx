@@ -10,18 +10,29 @@ import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, u
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, type FileInfo, type ItemInfo } from "../api";
+import { internalUrls, MediaUrlsContext, useMediaUrls, type MediaUrls } from "../media-urls";
 import { Spinner } from "../ui";
-import { bytes, camera, cls, date, dims, downloadUrl, duration, fullUrl, STATUS_LABEL, thumbUrl } from "../util";
+import { bytes, camera, cls, date, dims, duration, STATUS_LABEL } from "../util";
+import AlbumPicker from "./AlbumPicker";
 import { VideoPlayer } from "./MediaView";
 
 /** One thing to show. `file` (the primary file id) lets the filmstrip draw thumbnails without extra requests. */
 export interface ViewerEntry {
   item: number;
   file?: number | null;
+  /** Pre-loaded details (public share pages); otherwise fetched from /api/items/:id. */
+  info?: ItemInfo;
+}
+
+export interface ViewerOptions {
+  /** Where media is loaded from (share-link URLs on public pages). */
+  urls?: MediaUrls;
+  /** Public share page: no album actions, minimal metadata. */
+  publicMode?: boolean;
 }
 
 interface ViewerApi {
-  open: (entries: ViewerEntry[], start?: number) => void;
+  open: (entries: ViewerEntry[], start?: number, opts?: ViewerOptions) => void;
   isOpen: boolean;
 }
 
@@ -29,21 +40,24 @@ const ViewerCtx = createContext<ViewerApi>({ open: () => {}, isOpen: false });
 export const useViewer = () => useContext(ViewerCtx);
 
 export function ViewerProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<{ entries: ViewerEntry[]; index: number } | null>(null);
-  const open = useCallback((entries: ViewerEntry[], start = 0) => {
-    if (entries.length) setState({ entries, index: Math.min(Math.max(start, 0), entries.length - 1) });
+  const [state, setState] = useState<{ entries: ViewerEntry[]; index: number; opts: ViewerOptions } | null>(null);
+  const open = useCallback((entries: ViewerEntry[], start = 0, opts: ViewerOptions = {}) => {
+    if (entries.length) setState({ entries, index: Math.min(Math.max(start, 0), entries.length - 1), opts });
   }, []);
   const value = useMemo(() => ({ open, isOpen: state !== null }), [open, state]);
   return (
     <ViewerCtx.Provider value={value}>
       {children}
       {state && (
-        <MediaViewer
-          entries={state.entries}
-          index={state.index}
-          onIndex={(index) => setState((s) => (s ? { ...s, index } : s))}
-          onClose={() => setState(null)}
-        />
+        <MediaUrlsContext.Provider value={state.opts.urls ?? internalUrls}>
+          <MediaViewer
+            entries={state.entries}
+            index={state.index}
+            publicMode={!!state.opts.publicMode}
+            onIndex={(index) => setState((s) => (s ? { ...s, index } : s))}
+            onClose={() => setState(null)}
+          />
+        </MediaUrlsContext.Provider>
       )}
     </ViewerCtx.Provider>
   );
@@ -75,21 +89,26 @@ interface ZoomApi {
 function MediaViewer({
   entries,
   index,
+  publicMode,
   onIndex,
   onClose,
 }: {
   entries: ViewerEntry[];
   index: number;
+  publicMode: boolean;
   onIndex: (i: number) => void;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const urls = useMediaUrls();
   const entry = entries[index];
-  const q = useQuery({ queryKey: ["item", entry.item], queryFn: () => fetchItem(entry.item) });
-  const it = q.data;
+  const q = useQuery({ queryKey: ["item", entry.item], queryFn: () => fetchItem(entry.item), enabled: !entry.info });
+  const it = entry.info ?? q.data;
   const f = it?.primary;
-  const [showInfo, setShowInfo] = useState(() => readPref("viewer.info", true));
+  const [showInfo, setShowInfo] = useState(() => readPref(publicMode ? "viewer.info.public" : "viewer.info", !publicMode));
   const [live, setLive] = useState(false);
+  const [picker, setPicker] = useState(false);
+  const download = f && f.status !== "purged" ? urls.download(f.id) : null;
   const zoom = useRef<ZoomApi | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const many = entries.length > 1;
@@ -109,17 +128,17 @@ function MediaViewer({
     for (const d of [-1, 1, 2]) {
       const e = entries[index + d];
       if (!e) continue;
-      qc.prefetchQuery({ queryKey: ["item", e.item], queryFn: () => fetchItem(e.item) });
-      if (e.file) new Image().src = thumbUrl(e.file, "l");
+      if (!e.info) qc.prefetchQuery({ queryKey: ["item", e.item], queryFn: () => fetchItem(e.item) });
+      if (e.file) new Image().src = urls.thumb(e.file, "l");
     }
-  }, [index, entries, qc]);
+  }, [index, entries, qc, urls]);
 
   const toggleInfo = useCallback(() => {
     setShowInfo((v) => {
-      writePref("viewer.info", !v);
+      writePref(publicMode ? "viewer.info.public" : "viewer.info", !v);
       return !v;
     });
-  }, []);
+  }, [publicMode]);
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -130,7 +149,7 @@ function MediaViewer({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
-      if (["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) return;
+      if (picker || ["INPUT", "SELECT", "TEXTAREA"].includes(t.tagName)) return; // let the dialog handle keys
       e.stopImmediatePropagation();
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key;
@@ -147,12 +166,13 @@ function MediaViewer({
       else if (k === "-" || k === "_") zoom.current?.zoomBy(1 / 1.5);
       else if (k === "0") zoom.current?.reset();
       else if ((k === "l" || k === "L") && it?.is_live_photo) setLive((v) => !v);
+      else if ((k === "a" || k === "A") && !publicMode) setPicker(true);
       else return;
       e.preventDefault();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [go, onClose, onIndex, entries.length, toggleInfo, toggleFullscreen, it?.is_live_photo]);
+  }, [go, onClose, onIndex, entries.length, toggleInfo, toggleFullscreen, it?.is_live_photo, picker, publicMode]);
 
   // Lock page scroll underneath.
   useEffect(() => {
@@ -170,7 +190,9 @@ function MediaViewer({
           <strong title={f?.path}>{f?.name ?? "Loading…"}</strong>
           {f && (
             <span className="viewer-sub">
-              {f.owner} · {date(f.taken_at, false)} · {f.kind === "video" ? duration(f.duration) : dims(f)}
+              {[f.owner, f.taken_at ? date(f.taken_at, false) : null, f.kind === "video" ? duration(f.duration) : dims(f)]
+                .filter(Boolean)
+                .join(" · ")}
             </span>
           )}
         </div>
@@ -185,14 +207,19 @@ function MediaViewer({
               ◉ Live
             </button>
           )}
+          {!publicMode && f && (
+            <button className="vbtn" onClick={() => setPicker(true)} title="Add to an album (A)">
+              ＋ Album
+            </button>
+          )}
           <button className={cls("vbtn", showInfo && "on")} onClick={toggleInfo} title="Details (I)">
             ⓘ Info
           </button>
           <button className="vbtn" onClick={toggleFullscreen} title="Full screen (F)">
             ⛶
           </button>
-          {f && f.status !== "purged" && (
-            <a className="vbtn" href={downloadUrl(f.id)} title="Download the original file to this computer">
+          {download && (
+            <a className="vbtn" href={download} title="Download the original file to this computer">
               ⤓ Download
             </a>
           )}
@@ -226,16 +253,18 @@ function MediaViewer({
         )}
       </div>
 
-      {showInfo && <InfoPanel it={it} onClose={onClose} />}
+      {showInfo && <InfoPanel it={it} onClose={onClose} publicMode={publicMode} />}
 
       {many && <Filmstrip entries={entries} index={index} onIndex={onIndex} />}
+      {picker && it && <AlbumPicker itemIds={[it.id]} onClose={() => setPicker(false)} z={3500} />}
     </div>
   );
 }
 
 /** Image with wheel/drag/double-click zoom. Shows the 2048px preview at once, then the full-resolution version. */
 function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefObject<ZoomApi | null> }) {
-  const [src, setSrc] = useState<string | null>(file.thumb ? thumbUrl(file.id, "l") : null);
+  const urls = useMediaUrls();
+  const [src, setSrc] = useState<string | null>(file.thumb ? urls.thumb(file.id, "l") : null);
   const [quality, setQuality] = useState<"preview" | "full" | "failed">("preview");
   const [view, setView] = useState({ s: 1, x: 0, y: 0 });
   const box = useRef<HTMLDivElement>(null);
@@ -250,12 +279,12 @@ function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefO
       setQuality("full");
     };
     img.onerror = () => alive && setQuality("failed");
-    img.src = fullUrl(file.id);
+    img.src = urls.full(file.id);
     return () => {
       alive = false;
       img.onload = img.onerror = null;
     };
-  }, [file.id]);
+  }, [file.id, urls]);
 
   // Zoom keeping the point under (cx, cy) — viewport coords relative to the box centre — fixed.
   const zoomAt = useCallback((factor: number, cx = 0, cy = 0) => {
@@ -338,9 +367,26 @@ function ZoomImage({ file, apiRef }: { file: FileInfo; apiRef: React.MutableRefO
   );
 }
 
-function InfoPanel({ it, onClose }: { it: ItemInfo | undefined; onClose: () => void }) {
+function InfoPanel({ it, onClose, publicMode }: { it: ItemInfo | undefined; onClose: () => void; publicMode: boolean }) {
   if (!it) return <aside className="viewer-info" />;
   const f = it.primary;
+  if (publicMode) {
+    return (
+      <aside className="viewer-info">
+        <dl className="kv">
+          <dt>Taken</dt><dd>{date(f.taken_at)}</dd>
+          <dt>Camera</dt><dd>{camera(f)}</dd>
+          <dt>Dimensions</dt><dd>{dims(f)}</dd>
+          {f.kind === "video" && (<><dt>Duration</dt><dd>{duration(f.duration)}</dd></>)}
+          <dt>Format / size</dt><dd>{f.ext.toUpperCase()} · {bytes(f.size)}</dd>
+          {it.is_live_photo && (<><dt>Live Photo</dt><dd>Press L or ◉ Live to play the motion</dd></>)}
+        </dl>
+        <div className="viewer-keys">
+          <kbd>←</kbd><kbd>→</kbd> browse · <kbd>+</kbd><kbd>−</kbd><kbd>0</kbd> zoom · <kbd>F</kbd> full screen · <kbd>I</kbd> info · <kbd>Esc</kbd> close
+        </div>
+      </aside>
+    );
+  }
   return (
     <aside className="viewer-info">
       <dl className="kv">
@@ -365,6 +411,7 @@ function InfoPanel({ it, onClose }: { it: ItemInfo | undefined; onClose: () => v
         {it.is_live_photo && (<><dt>Live Photo</dt><dd>Paired with {it.companion?.name}</dd></>)}
         <dt>Added</dt><dd>{date(f.first_seen_at)}</dd>
       </dl>
+      <ItemAlbums itemId={it.id} onClose={onClose} />
       {it.group_ids && it.group_ids.length > 0 && (
         <div className="row" style={{ marginTop: 12 }}>
           <span className="muted small">Duplicate groups:</span>
@@ -386,13 +433,32 @@ function InfoPanel({ it, onClose }: { it: ItemInfo | undefined; onClose: () => v
         </details>
       )}
       <div className="viewer-keys">
-        <kbd>←</kbd><kbd>→</kbd> browse · <kbd>+</kbd><kbd>−</kbd><kbd>0</kbd> zoom · <kbd>F</kbd> full screen · <kbd>I</kbd> info · <kbd>Esc</kbd> close
+        <kbd>←</kbd><kbd>→</kbd> browse · <kbd>+</kbd><kbd>−</kbd><kbd>0</kbd> zoom · <kbd>A</kbd> add to album · <kbd>F</kbd> full screen · <kbd>I</kbd> info · <kbd>Esc</kbd> close
       </div>
     </aside>
   );
 }
 
+function ItemAlbums({ itemId, onClose }: { itemId: number; onClose: () => void }) {
+  const q = useQuery({
+    queryKey: ["item-albums", itemId],
+    queryFn: () => api<{ albums: { id: number; title: string }[] }>(`/api/albums/for-item/${itemId}`),
+  });
+  if (!q.data?.albums.length) return null;
+  return (
+    <div className="row" style={{ marginTop: 12 }}>
+      <span className="muted small">In albums:</span>
+      {q.data.albums.map((a) => (
+        <Link key={a.id} to={`/albums/${a.id}`} className="badge accent" onClick={onClose}>
+          {a.title}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 function Filmstrip({ entries, index, onIndex }: { entries: ViewerEntry[]; index: number; onIndex: (i: number) => void }) {
+  const urls = useMediaUrls();
   const strip = useRef<HTMLDivElement>(null);
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>(".on")?.scrollIntoView({ inline: "center", block: "nearest", behavior: "smooth" });
@@ -406,7 +472,7 @@ function Filmstrip({ entries, index, onIndex }: { entries: ViewerEntry[]; index:
         const i = from + k;
         return (
           <button key={`${e.item}-${i}`} className={cls("strip-thumb", i === index && "on")} onClick={() => onIndex(i)} aria-label={`Item ${i + 1}`}>
-            {e.file ? <img src={thumbUrl(e.file)} alt="" loading="lazy" /> : <span>{i + 1}</span>}
+            {e.file ? <img src={urls.thumb(e.file)} alt="" loading="lazy" /> : <span>{i + 1}</span>}
           </button>
         );
       })}

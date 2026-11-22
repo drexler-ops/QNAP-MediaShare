@@ -367,6 +367,11 @@ export default function Review({ me }: { me: Me }) {
                       {!f.has_exif && <span className="badge warn">No EXIF</span>}
                       {f.has_gps && <span className="badge keep">GPS</span>}
                       {m.match_type === "exact" && g.type !== "exact" && <span className="badge accent">identical copy</span>}
+                      {m.albums > 0 && (
+                        <span className="badge" title="If this copy is deleted, its albums switch to the copy you keep">
+                          📚 in {m.albums} {m.albums === 1 ? "album" : "albums"}
+                        </span>
+                      )}
                     </div>
                     {m.score_breakdown?.notes?.length ? (
                       <div className="notes small muted" style={{ marginTop: 2 }}>
