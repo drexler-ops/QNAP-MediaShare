@@ -105,7 +105,7 @@ services:
   # COMPOSE_PROFILES=remote and TS_AUTHKEY in .env. Exposes ONLY this app (HTTPS, inside your
   # tailnet): no router ports, and tailnet devices can't reach QTS, file shares or anything else.
   tailscale:
-    image: tailscale/tailscale:v1.82.5
+    image: tailscale/tailscale:v1.88.3
     profiles: ["remote"]
     restart: unless-stopped
     hostname: ${TS_HOSTNAME:-photo-audit}
@@ -126,7 +126,7 @@ services:
   # A separate Tailscale machine that publishes ONLY the share-only service to the internet at
   # https://<TS_SHARE_HOSTNAME>.<tailnet>.ts.net. The main app is never reachable through it.
   tailscale-share:
-    image: tailscale/tailscale:v1.82.5
+    image: tailscale/tailscale:v1.88.3
     profiles: ["public"]
     restart: unless-stopped
     hostname: ${TS_SHARE_HOSTNAME:-photo-share}
