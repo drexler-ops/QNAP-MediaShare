@@ -25,6 +25,8 @@ services:
       SCHEDULER_ENABLED: "false"
       RUN_MIGRATIONS: "false"
       MODELS_ROOT: /models
+      # One thread per process: the worker already runs one process per core.
+      FACE_THREADS: ${PC_FACE_THREADS:-1}
     volumes:
       - library:/library:ro
       - thumbs:/thumbs
