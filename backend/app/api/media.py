@@ -14,8 +14,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..jobs import enqueue
-from ..models import File, Job, User
+from ..models import File, User
 from ..paths import abs_path
 from ..scanner.hashing import open_image_bytes
 from ..scanner.thumbs import full_path, preview_path, thumb_path
@@ -82,22 +81,18 @@ def _direct_playable(f: File) -> bool:
     return f.codec in BROWSER_SAFE_VIDEO and f.ext in ("mp4", "m4v", "mov")
 
 
-def preview_state(db: Session, f: File) -> dict:
-    """Is a browser-playable version ready? Queues a background transcode (HEVC etc.) on first ask."""
+def preview_state(db: Session, f: File, retry: bool = False) -> dict:
+    """Is a browser-playable version ready? Starts converting (HEVC etc.) on first ask."""
+    from .. import previews
+
     if f.kind != "video":
         raise HTTPException(400, "Not a video")
-    if (_direct_playable(f) and os.path.isfile(abs_path(f.path))) or os.path.isfile(preview_path(f.id)):
+    if _direct_playable(f) and os.path.isfile(abs_path(f.path)):
         return {"status": "ready"}
-    jobs = [
-        j for j in db.scalars(select(Job).where(Job.type == "preview").order_by(Job.id.desc()).limit(200))
-        if (j.payload or {}).get("file_id") == f.id
-    ]
-    if any(j.state in ("queued", "running") for j in jobs):
-        return {"status": "processing"}
-    if jobs and jobs[0].state == "error":
-        return {"status": "failed", "error": (jobs[0].error or "").splitlines()[0][:300]}
-    enqueue(db, "preview", {"file_id": f.id}, priority=10)
-    return {"status": "processing"}
+    st = previews.request(f.id, f.path, retry=retry)
+    if st["status"] == "ready" and (f.duration or 0) > previews.PREVIEW_SECONDS:
+        st["preview_seconds"] = previews.PREVIEW_SECONDS  # only the start is playable in the app
+    return st
 
 
 def serve_preview(f: File) -> FileResponse:
@@ -132,8 +127,8 @@ def original(file_id: int, db: Session = Depends(get_db), _: User = Depends(curr
 
 
 @router.get("/{file_id}/preview/status")
-def preview_status(file_id: int, db: Session = Depends(get_db), _: User = Depends(current_user)):
-    return preview_state(db, _file(db, file_id))
+def preview_status(file_id: int, retry: bool = False, db: Session = Depends(get_db), _: User = Depends(current_user)):
+    return preview_state(db, _file(db, file_id), retry=retry)
 
 
 @router.get("/{file_id}/preview")

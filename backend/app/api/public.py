@@ -161,9 +161,9 @@ def full(token: str, file_id: int, request: Request, db: Session = Depends(get_d
 
 
 @router.get("/s/{token}/files/{file_id}/preview/status")
-def preview_status(token: str, file_id: int, request: Request, db: Session = Depends(get_db)):
+def preview_status(token: str, file_id: int, request: Request, retry: bool = False, db: Session = Depends(get_db)):
     _, f = _shared_file(request, db, token, file_id)
-    return media.preview_state(db, f)
+    return media.preview_state(db, f, retry=retry)
 
 
 @router.get("/s/{token}/files/{file_id}/preview")

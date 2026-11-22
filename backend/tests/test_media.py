@@ -74,3 +74,40 @@ def test_media_requires_sign_in(session, users):
     with TestClient(create_app()) as anon:
         assert anon.get(f"/api/files/{f.id}/full").status_code == 401
         assert anon.get(f"/api/files/{f.id}/original").status_code == 401
+
+
+def test_video_preview_converts_in_the_web_process(tmp_path, monkeypatch):
+    """Previews never wait in the job queue: first ask starts a conversion, then it's ready; failures explain."""
+    import time
+
+    from app import previews
+
+    made = []
+
+    def fake_make(src, out, max_seconds=120):
+        made.append((src, out))
+        if "broken" in src:
+            raise RuntimeError("Invalid data found when processing input")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        open(out, "wb").write(b"mp4")
+
+    monkeypatch.setattr(previews, "make_preview", fake_make)
+    monkeypatch.setattr(previews, "preview_path", lambda fid: str(tmp_path / f"{fid}_preview.mp4"))
+
+    def wait(fid, rel):
+        for _ in range(100):
+            st = previews.request(fid, rel)
+            if st["status"] != "processing":
+                return st
+            time.sleep(0.02)
+        return st
+
+    first = previews.request(901, "Alex/clip.mov")
+    assert first["status"] == "processing" and first["stage"] in ("queued", "running")
+    assert wait(901, "Alex/clip.mov") == {"status": "ready"} and len(made) == 1
+    assert previews.request(901, "Alex/clip.mov") == {"status": "ready"} and len(made) == 1  # cached
+
+    bad = wait(902, "Alex/broken.mov")
+    assert bad["status"] == "failed" and "couldn't be converted" in bad["error"] and "Invalid data" in bad["error"]
+    assert previews.request(902, "Alex/broken.mov")["status"] == "failed"  # remembered, not retried every poll
+    assert previews.request(902, "Alex/broken.mov", retry=True)["status"] == "processing"  # explicit retry

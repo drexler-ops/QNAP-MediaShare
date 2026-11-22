@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type FileInfo } from "../api";
-import { thumbUrl } from "../util";
+import { cls, thumbUrl } from "../util";
 import { useMediaUrls } from "../media-urls";
 import { Spinner } from "../ui";
 
@@ -11,26 +11,27 @@ import { Spinner } from "../ui";
  */
 export function VideoPlayer({ file, autoPlay, loop, customControls }: { file: FileInfo; autoPlay?: boolean; loop?: boolean; customControls?: boolean }) {
   const urls = useMediaUrls();
-  const [status, setStatus] = useState<"checking" | "ready" | "processing" | "failed">("checking");
-  const [error, setError] = useState<string | null>(null);
+  const [st, setSt] = useState<PreviewStatus>({ status: "checking" });
+  const [attempt, setAttempt] = useState(0); // bump to retry a failed conversion
+  const [playError, setPlayError] = useState(false);
+  const [buffering, setBuffering] = useState(false);
 
   useEffect(() => {
     let alive = true;
     let timer: number | undefined;
+    let retry = attempt > 0;
+    setSt({ status: "checking" });
+    setPlayError(false);
     const check = async () => {
       try {
-        const r = await api<{ status: "ready" | "processing" | "failed"; error?: string }>(
-          urls.previewStatus(file.id),
-        );
+        const base = urls.previewStatus(file.id);
+        const r = await api<PreviewStatus>(retry ? `${base}${base.includes("?") ? "&" : "?"}retry=1` : base);
+        retry = false;
         if (!alive) return;
-        setStatus(r.status);
-        if (r.status === "failed") setError(r.error ?? "Could not convert this video");
-        if (r.status === "processing") timer = window.setTimeout(check, 2500);
+        setSt(r);
+        if (r.status === "processing") timer = window.setTimeout(check, 1500);
       } catch (e) {
-        if (alive) {
-          setStatus("failed");
-          setError(String(e));
-        }
+        if (alive) setSt({ status: "failed", error: `Couldn't check this video (${e instanceof Error ? e.message : String(e)}).` });
       }
     };
     check();
@@ -38,39 +39,70 @@ export function VideoPlayer({ file, autoPlay, loop, customControls }: { file: Fi
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [file.id, urls]);
+  }, [file.id, urls, attempt]);
 
-  if (status === "ready" && customControls) {
-    return <TouchVideo src={urls.preview(file.id)} poster={file.thumb ? urls.thumb(file.id, "l") : undefined} autoPlay={autoPlay} loop={loop} />;
-  }
-  if (status === "ready") {
+  const poster = file.thumb ? urls.thumb(file.id, "l") : undefined;
+  if (st.status === "ready" && !playError) {
+    const events = {
+      onError: () => setPlayError(true),
+      onWaiting: () => setBuffering(true),
+      onPlaying: () => setBuffering(false),
+      onCanPlay: () => setBuffering(false),
+    };
+    const note = st.preview_seconds ? (
+      <div className="vnote">Playing the first {Math.round(st.preview_seconds / 60)} min · download for the whole video</div>
+    ) : null;
     return (
-      <video
-        src={urls.preview(file.id)}
-        poster={file.thumb ? urls.thumb(file.id, "l") : undefined}
-        controls
-        autoPlay={autoPlay}
-        loop={loop}
-        playsInline
-        onClick={(e) => e.stopPropagation()}
-      />
+      <>
+        {customControls ? (
+          <TouchVideo src={urls.preview(file.id)} poster={poster} autoPlay={autoPlay} loop={loop} events={events} />
+        ) : (
+          <video src={urls.preview(file.id)} poster={poster} controls autoPlay={autoPlay} loop={loop} playsInline onClick={(e) => e.stopPropagation()} {...events} />
+        )}
+        {buffering && <div className="vwait-msg vwait-float"><Spinner /> Loading…</div>}
+        {note}
+      </>
     );
   }
+
+  // Not playable yet: the poster fitted to the screen (dimmed) with a clear status in the middle.
+  const msg =
+    playError ? (
+      <>⚠ This video can't play in this browser. Download it to watch it.</>
+    ) : st.status === "failed" ? (
+      <>
+        <span>⚠ {st.error ?? "This video couldn't be converted for playback."}</span>
+        <button className="btn sm" onClick={(e) => { e.stopPropagation(); setAttempt((n) => n + 1); }} onPointerDown={(e) => e.stopPropagation()}>Try again</button>
+      </>
+    ) : st.status === "processing" && st.stage === "running" ? (
+      <><Spinner /> Converting this video for playback…</>
+    ) : st.status === "processing" ? (
+      <><Spinner /> Waiting to convert{st.ahead ? ` (${st.ahead} other video${st.ahead === 1 ? "" : "s"} first)` : ""}…</>
+    ) : (
+      <><Spinner /> Loading video…</>
+    );
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", display: "grid", placeItems: "center" }}>
-      {file.thumb && <img src={urls.thumb(file.id, "l")} alt="" style={{ opacity: 0.5 }} />}
-      <div className="badge" style={{ position: "absolute", gap: 8, padding: "6px 12px" }}>
-        {status === "failed" ? (
-          <>⚠ {error}</>
-        ) : (
-          <>
-            <Spinner /> Preparing a playable preview…
-          </>
-        )}
-      </div>
+    <div className="vwait">
+      {poster && <img src={poster} alt="" draggable={false} />}
+      <div className={cls("vwait-msg", (playError || st.status === "failed") && "error")} role="status">{msg}</div>
     </div>
   );
 }
+
+type PreviewStatus = {
+  status: "checking" | "ready" | "processing" | "failed";
+  stage?: "queued" | "running";
+  ahead?: number;
+  error?: string;
+  preview_seconds?: number;
+};
+
+type VideoEvents = {
+  onError: () => void;
+  onWaiting: () => void;
+  onPlaying: () => void;
+  onCanPlay: () => void;
+};
 
 function clock(sec: number): string {
   if (!isFinite(sec) || sec < 0) sec = 0;
@@ -80,7 +112,7 @@ function clock(sec: number): string {
 }
 
 /** Video with a minimal overlay control bar; touches on the picture itself fall through to the viewer. */
-function TouchVideo({ src, poster, autoPlay, loop }: { src: string; poster?: string; autoPlay?: boolean; loop?: boolean }) {
+function TouchVideo({ src, poster, autoPlay, loop, events }: { src: string; poster?: string; autoPlay?: boolean; loop?: boolean; events: VideoEvents }) {
   const v = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [t, setT] = useState(0);
@@ -109,6 +141,8 @@ function TouchVideo({ src, poster, autoPlay, loop }: { src: string; poster?: str
         onLoadedMetadata={(e) => setDur(e.currentTarget.duration)}
         onDurationChange={(e) => setDur(e.currentTarget.duration)}
         onVolumeChange={(e) => setMuted(e.currentTarget.muted)}
+        {...events}
+        onPlaying={() => { setPlaying(true); events.onPlaying(); }}
       />
       {!playing && (
         <button className="vplay" onPointerDown={stop} onClick={(e) => { e.stopPropagation(); toggle(); }} aria-label="Play">
