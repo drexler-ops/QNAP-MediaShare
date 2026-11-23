@@ -273,3 +273,13 @@ def test_admin_chosen_cover_is_kept_until_its_face_leaves(session, users):
         assert r.json()["cover_pinned"] is True
         r = c.put(f"/api/people/{pid}/cover", json={"face_id": None})  # back to automatic
         assert r.json()["cover_pinned"] is False and r.json()["cover_face_id"] is not None
+
+
+def test_user_state_snapshot_handles_huge_libraries(session, users):
+    """Regression: an IN (...) of every face id failed past 65,535 faces (PostgreSQL parameter limit)."""
+    files = [with_preview(session, users, f"Alex/h{i}.jpg") for i in range(3)]
+    session.commit()
+    run(session, files, {f.id: [("A", (10, 10, 90, 90))] for f in files})
+    real = list(session.scalars(select(Face.id)))
+    faces, _people = grouping._user_state(session, real + list(range(10_000_000, 10_070_000)))
+    assert sorted(faces) == sorted(real)

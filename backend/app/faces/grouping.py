@@ -95,12 +95,13 @@ def faces_lock(session: Session) -> None:
 
 def _user_state(session: Session, face_ids: list[int] | None = None) -> tuple[dict, dict]:
     """What users decide: manual assignments, 'not this person' lists, names, hidden flags."""
-    q = select(Face.id, Face.assignment, Face.person_id, Face.rejected)
-    if face_ids is not None:
-        q = q.where(Face.id.in_(face_ids))
+    # Read every face and filter here: an IN (...) list of all face ids breaks past 65,535 faces
+    # (PostgreSQL's limit on query parameters), and this table scan is cheap anyway.
+    wanted = set(face_ids) if face_ids is not None else None
     faces = {
         fid: (pid if a == "manual" else None, a == "manual", tuple(sorted(rej or ())))
-        for fid, a, pid, rej in session.execute(q)
+        for fid, a, pid, rej in session.execute(select(Face.id, Face.assignment, Face.person_id, Face.rejected))
+        if wanted is None or fid in wanted
     }
     people = {pid: (name, hidden) for pid, name, hidden in session.execute(select(Person.id, Person.name, Person.hidden))}
     return faces, people
