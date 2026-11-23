@@ -92,16 +92,21 @@ def enqueue_batches(session: Session, ids: list[int], mode: str, size: int) -> i
 def handle_scan(session: Session, job: Job) -> dict[str, Any]:
     from .scanner.walker import scan
 
+    from .scanner.sidecar import backfill
+
     res = scan(session)
+    takeout = backfill(session)  # Takeout .json copied in after their photos were indexed
     batches = enqueue_batches(session, res.to_process, "full", PROCESS_BATCH)
     if batches == 0:
         never_grouped = session.scalar(select(Job.id).where(Job.type == "group").limit(1)) is None
-        changed = res.new or res.changed or res.missing or res.returned
+        changed = res.new or res.changed or res.missing or res.returned or takeout["dates"]
         if changed or never_grouped or (job.payload or {}).get("force_group"):
             maybe_enqueue_group(session)
     return {
         "seen": res.seen, "new": res.new, "changed": res.changed, "missing": res.missing,
         "returned": res.returned, "batches": batches,
+        **({"takeout_dates": takeout["dates"], "takeout_locations": takeout["locations"]}
+           if takeout["dates"] or takeout["locations"] else {}),
     }
 
 

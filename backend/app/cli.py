@@ -37,6 +37,7 @@ def main() -> None:
     sub.add_parser("scan", help="queue a library scan now")
     sub.add_parser("regroup", help="queue duplicate regrouping now")
     sub.add_parser("previews", help="queue playable copies for every video that needs one (one-time catch-up)")
+    sub.add_parser("takeout", help="fill missing dates/locations from Google Takeout .json files next to photos")
     args = parser.parse_args()
 
     with session_scope() as s:
@@ -65,6 +66,15 @@ def main() -> None:
             from .jobs import enqueue_previews
 
             print(f"{enqueue_previews(s)} preview batches queued")
+        elif args.cmd == "takeout":
+            from .scanner.sidecar import backfill
+
+            res = backfill(s)
+            print(f"checked {res['checked']} files next to .json sidecars: "
+                  f"{res['dates']} dates and {res['locations']} locations filled")
+            if res["dates"]:
+                enqueue(s, "group", unique=True)  # new dates can form burst groups
+                print("regroup queued")
 
 
 if __name__ == "__main__":

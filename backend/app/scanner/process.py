@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -64,6 +65,9 @@ def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
         log.warning("exiftool batch failed: %s", exc)
         tags_by_path = {}
 
+    from .sidecar import apply_sidecar, json_listing
+
+    listings: dict[str, set[str]] = {}  # folder -> its .json names (Google Takeout sidecars), read once per batch
     for f in files:
         full = paths[f.id]
         try:
@@ -79,6 +83,11 @@ def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
                 for key, value in parse_exif(tags).items():
                     if value is not None or key in ("gps_lat", "gps_lon", "taken_at", "live_photo_id"):
                         setattr(f, key, value)
+            folder = os.path.dirname(full)
+            if folder not in listings:
+                listings[folder] = json_listing(folder)
+            if listings[folder]:
+                apply_sidecar(f, full, listings[folder])  # Takeout: fill a missing date / location
             if f.kind == "image":
                 _process_image(f, full)
             else:
