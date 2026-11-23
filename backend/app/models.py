@@ -240,6 +240,8 @@ class Person(Base):
     # Hidden = "don't show this person/cluster" (strangers, statues...). Faces stay assigned to it.
     hidden: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     cover_face_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # An admin chose cover_face_id: keep it (until that face leaves this person or its photo goes).
+    cover_pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

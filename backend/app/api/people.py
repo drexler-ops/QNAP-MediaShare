@@ -17,7 +17,7 @@ from ..jobs import enqueue
 from ..models import Face, File, Item, Job, Person, User
 from ..scanner.thumbs import face_thumb_path
 from ..settings_store import get_settings
-from .deps import current_user, get_db
+from .deps import current_user, get_db, require_admin
 from .serialize import Names, item_dict
 
 router = APIRouter(prefix="/api", tags=["people"])
@@ -52,7 +52,8 @@ def _person(db: Session, pid: int) -> Person:
 
 def _person_dict(p: Person, counts: dict[int, tuple[int, int]]) -> dict:
     n, photos = counts.get(p.id, (0, 0))
-    return {"id": p.id, "name": p.name, "hidden": p.hidden, "cover_face_id": p.cover_face_id, "faces": n, "photos": photos}
+    return {"id": p.id, "name": p.name, "hidden": p.hidden, "cover_face_id": p.cover_face_id, "cover_pinned": p.cover_pinned,
+            "faces": n, "photos": photos}
 
 
 def _by_name(db: Session, name: str, exclude: int | None = None) -> Person | None:
@@ -229,6 +230,8 @@ def merge(person_id: int, body: MergeIn, db: Session = Depends(get_db), user: Us
         raise HTTPException(400, "Can't merge a person into themselves")
     if not dst.name and src.name:
         dst.name = src.name
+    if src.cover_pinned and not dst.cover_pinned:  # keep the picture an admin chose (its face moves to dst)
+        dst.cover_face_id, dst.cover_pinned = src.cover_face_id, True
     _merge(db, src, dst, user)
     _regroup(db)
     return {"id": dst.id}
@@ -327,3 +330,27 @@ def item_faces(item_id: int, db: Session = Depends(get_db), _: User = Depends(cu
          "suggested_id": f.suggested_person_id, "suggested_name": sugg.get(f.suggested_person_id)}
         for f, name in rows
     ]
+
+
+class CoverIn(BaseModel):
+    face_id: int | None = None  # None: back to the automatic pick
+
+
+@router.put("/people/{person_id}/cover")
+def set_cover(person_id: int, body: CoverIn, db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    """Admins: choose which of this person's faces is their picture (kept through regrouping)."""
+    faces_lock(db)  # wait for a regroup that is writing right now; it never overwrites edits
+    p = _person(db, person_id)
+    if body.face_id is None:
+        p.cover_pinned = False
+        refresh_covers(db)
+    else:
+        face = db.scalar(
+            select(Face).join(File, File.id == Face.file_id)
+            .where(Face.id == body.face_id, Face.person_id == p.id, File.status.in_(LIVE))
+        )
+        if face is None:
+            raise HTTPException(400, "That face isn't one of this person's photos")
+        p.cover_face_id, p.cover_pinned = face.id, True
+    audit(db, user.id, "person_cover", "person", p.id, face=p.cover_face_id, pinned=p.cover_pinned)
+    return {"id": p.id, "cover_face_id": p.cover_face_id, "cover_pinned": p.cover_pinned}

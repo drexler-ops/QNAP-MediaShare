@@ -148,7 +148,7 @@ function Shell({ me }: { me: Me }) {
           <Route path="/albums" element={<Albums />} />
           <Route path="/people" element={<People />} />
           <Route path="/people/review" element={<FaceReview />} />
-          <Route path="/people/:id" element={<PersonPage />} />
+          <Route path="/people/:id" element={<PersonPage me={me} />} />
           <Route path="/albums/:id" element={<AlbumPage me={me} />} />
           {cfg.map_tile_url && <Route path="/map" element={<MapPage />} />}
           <Route path="/audit" element={<Audit />} />

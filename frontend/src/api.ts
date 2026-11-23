@@ -270,6 +270,8 @@ export interface PersonSummary {
   name: string | null;
   hidden: boolean;
   cover_face_id: number | null;
+  /** An admin chose this cover (kept through regrouping). */
+  cover_pinned?: boolean;
   faces: number;
   photos: number;
 }

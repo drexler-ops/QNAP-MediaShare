@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, faceThumbUrl, post, type PersonDetail } from "../api";
+import { api, faceThumbUrl, post, type Me, type PersonDetail } from "../api";
 import { useViewer } from "../components/MediaViewer";
-import { Loading, Pager, pageCount, Spinner, Thumb, usePageParam, useToast } from "../ui";
+import { Loading, Modal, Pager, pageCount, Spinner, Thumb, usePageParam, useToast } from "../ui";
 import { cls } from "../util";
 import { Avatar } from "./People";
 
@@ -12,7 +12,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const PHOTOS = 60;
 const FACES = 120;
 
-export default function PersonPage() {
+export default function PersonPage({ me }: { me: Me }) {
   const { id } = useParams();
   const pid = Number(id);
   const qc = useQueryClient();
@@ -35,6 +35,7 @@ export default function PersonPage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [mergeInto, setMergeInto] = useState("");
   const [moveTo, setMoveTo] = useState("");
+  const [pickCover, setPickCover] = useState(false);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["person", pid] });
@@ -150,10 +151,14 @@ export default function PersonPage() {
               {names.data?.filter((n) => n.id !== p.id).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}
             </select>
             {mergeInto && <button className="btn primary" disabled={merge.isPending} onClick={() => merge.mutate(Number(mergeInto))}>{merge.isPending ? "Merging…" : "Merge"}</button>}
+            {me.is_admin && p.faces > 0 && (
+              <button className="btn" onClick={() => setPickCover(true)} title="Choose which photo of them is shown on People">Change cover</button>
+            )}
             <button className="btn ghost" disabled={patch.isPending} onClick={() => patch.mutate({ hidden: !p.hidden })}>{p.hidden ? "Unhide" : "Hide"}</button>
           </div>
         )}
       </div>
+      {pickCover && <CoverPicker person={p} onClose={() => setPickCover(false)} onDone={refresh} />}
       <datalist id="person-names">{names.data?.map((n) => <option key={n.id} value={n.name} />)}</datalist>
 
       <div className="seg" style={{ marginBottom: 14 }}>
@@ -194,6 +199,7 @@ export default function PersonPage() {
               <button key={f.face_id} className={cls("face-tile", selected.has(f.face_id) && "selected")} onClick={() => toggle(f.face_id)} title={f.assignment === "auto" ? `Recognised automatically (${Math.round((f.similarity ?? 0) * 100)}%)` : "Confirmed"}>
                 <img src={faceThumbUrl(f.face_id)} alt="" loading="lazy" />
                 {f.assignment === "auto" && <span className="face-auto">auto</span>}
+                {me.is_admin && f.face_id === p.cover_face_id && <span className="face-cover">Cover</span>}
                 <span className="tile-check">{selected.has(f.face_id) ? "✓" : ""}</span>
               </button>
             ))}
@@ -202,5 +208,66 @@ export default function PersonPage() {
         </>
       )}
     </>
+  );
+}
+
+const PICK = 60;
+
+/** Admins: choose which of this person's faces is their picture on People (kept through regrouping). */
+function CoverPicker({ person, onClose, onDone }: { person: PersonDetail; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [page, setPage] = useState(1);
+  const q = useQuery({
+    queryKey: ["cover-faces", person.id, page],
+    queryFn: () => api<PersonDetail>(`/api/people/${person.id}?page=1&page_size=1&faces_page=${page}&faces_page_size=${PICK}`),
+    placeholderData: (prev) => prev,
+  });
+  const save = useMutation({
+    mutationFn: (face_id: number | null) =>
+      api<{ cover_face_id: number | null; cover_pinned: boolean }>(`/api/people/${person.id}/cover`, { method: "PUT", json: { face_id } }),
+    onSuccess: (r) => {
+      toast(r.cover_pinned ? "Cover updated." : "Cover set back to automatic.");
+      onDone();
+      onClose();
+    },
+    onError: (e) => toast(errMsg(e), true),
+  });
+  const faces = q.data?.face_list ?? [];
+  const total = q.data?.faces_total ?? person.faces_total;
+  return (
+    <Modal
+      wide
+      title={`Choose a cover for ${person.name ?? "this person"}`}
+      onClose={onClose}
+      footer={
+        <>
+          <span className="small muted grow">
+            {person.cover_pinned ? "Chosen by an admin. Kept when faces are regrouped." : "Picked automatically: the clearest face."}
+          </span>
+          <button className="btn" disabled={!person.cover_pinned || save.isPending} onClick={() => save.mutate(null)}>Use automatic pick</button>
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+        </>
+      }
+    >
+      <Pager top page={page} pages={pageCount(total, PICK)} onPage={setPage} />
+      {!q.data ? (
+        <Loading />
+      ) : (
+        <div className={cls("face-grid cover-grid", save.isPending && "busy")}>
+          {faces.map((f) => {
+            const current = f.face_id === person.cover_face_id;
+            return (
+              <button key={f.face_id} className={cls("face-tile", current && "selected")} disabled={save.isPending}
+                onClick={() => (current && person.cover_pinned ? onClose() : save.mutate(f.face_id))}
+                title={current ? "Current cover" : "Use this as the cover"} aria-label={current ? "Current cover" : "Use this face as the cover"}>
+                <img src={faceThumbUrl(f.face_id)} alt="" loading="lazy" />
+                {current && <span className="face-cover">Cover</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <Pager page={page} pages={pageCount(total, PICK)} onPage={setPage} />
+    </Modal>
   );
 }

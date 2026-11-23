@@ -236,3 +236,40 @@ def test_person_page_and_people_list_are_paged(session, users):
         assert len(seen) == 5  # pages don't overlap or skip
         lst = c.get("/api/people?unnamed_page_size=1").json()
         assert len(lst["unnamed"]) == 1 and lst["unnamed_total"] == 1 and lst["unnamed_page"] == 1
+
+
+def test_admin_chosen_cover_is_kept_until_its_face_leaves(session, users):
+    files = [with_preview(session, users, f"Alex/c{i}.jpg") for i in range(6)]
+    session.commit()
+    run(session, files, {f.id: [("A", (10, 10, 90, 90))] for f in files})
+    grouping.run_face_grouping(session)
+    pid = session.scalar(select(Person.id))
+    auto = session.get(Person, pid).cover_face_id
+    other = session.scalar(select(Face.id).where(Face.person_id == pid, Face.id != auto))
+
+    with TestClient(create_app()) as c:
+        login(c, "Alex")  # not an admin
+        assert c.put(f"/api/people/{pid}/cover", json={"face_id": other}).status_code == 403
+        login(c, "admin")
+        r = c.put(f"/api/people/{pid}/cover", json={"face_id": other})
+        assert r.status_code == 200 and r.json() == {"id": pid, "cover_face_id": other, "cover_pinned": True}
+        stranger = with_preview(session, users, "Alex/x.jpg")
+        session.commit()
+        run(session, [stranger], {stranger.id: [("B", (10, 10, 90, 90))]})
+        bad = session.scalar(select(Face.id).where(Face.file_id == stranger.id))
+        assert c.put(f"/api/people/{pid}/cover", json={"face_id": bad}).status_code == 400  # not their face
+
+        grouping.run_face_grouping(session)  # regrouping keeps the chosen cover
+        session.expire_all()
+        assert session.get(Person, pid).cover_face_id == other
+        assert c.get(f"/api/people/{pid}?faces_page_size=1&page_size=1").json()["cover_pinned"] is True
+
+        c.post("/api/faces/unassign", json={"face_ids": [other]})  # the chosen face is "not them": released
+        session.expire_all()
+        p = session.get(Person, pid)
+        assert p.cover_pinned is False and p.cover_face_id not in (None, other)
+
+        r = c.put(f"/api/people/{pid}/cover", json={"face_id": auto})
+        assert r.json()["cover_pinned"] is True
+        r = c.put(f"/api/people/{pid}/cover", json={"face_id": None})  # back to automatic
+        assert r.json()["cover_pinned"] is False and r.json()["cover_face_id"] is not None

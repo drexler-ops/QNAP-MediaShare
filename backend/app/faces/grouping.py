@@ -220,18 +220,27 @@ def _group_once(session: Session) -> dict[str, Any] | None:
 
 
 def refresh_covers(session: Session) -> None:
-    """Pick each person's best face (manual first, then largest, most confident) as their picture."""
+    """Pick each person's best face (manual first, then largest, most confident) as their picture.
+
+    A cover an admin chose (cover_pinned) is kept while that face is still this person's, in a live photo;
+    otherwise it is released and the automatic pick takes over.
+    """
     best: dict[int, tuple] = {}
+    owner: dict[int, int] = {}  # face -> person, live faces only
     rows = session.execute(
         select(Face.id, Face.person_id, Face.assignment, Face.size_px, Face.score)
         .join(File, File.id == Face.file_id)
         .where(Face.person_id.is_not(None), File.status.in_(LIVE))
     )
     for fid, pid, assignment, size, score in rows:
+        owner[fid] = pid
         key = (assignment == "manual", size * score)
         if pid not in best or key > best[pid][0]:
             best[pid] = (key, fid)
     for p in session.scalars(select(Person)):
+        if p.cover_pinned and p.cover_face_id is not None and owner.get(p.cover_face_id) == p.id:
+            continue
+        p.cover_pinned = False
         p.cover_face_id = best[p.id][1] if p.id in best else None
 
 
