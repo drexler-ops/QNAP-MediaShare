@@ -47,18 +47,22 @@ def _candidates(name: str) -> list[str]:
     return names
 
 
-def json_listing(folder: str) -> set[str]:
+def sidecar_listing(folder: str) -> set[str]:
+    """Names of the folder's sidecar files: Google Takeout .json and Apple Photos .xmp."""
     try:
-        return {e for e in os.listdir(folder) if e.lower().endswith(".json")}
+        return {e for e in os.listdir(folder) if e.lower().endswith((".json", ".xmp"))}
     except OSError:
         return set()
+
+
+def json_listing(folder: str) -> set[str]:
+    return {n for n in sidecar_listing(folder) if n.lower().endswith(".json")}
 
 
 def find_sidecar(path: str, listing: set[str] | None = None) -> str | None:
     """Path of the Takeout JSON for a media file, or None. `listing`: the folder's .json names (cache)."""
     folder, name = os.path.split(path)
-    if listing is None:
-        listing = json_listing(folder)
+    listing = json_listing(folder) if listing is None else {n for n in listing if n.lower().endswith(".json")}
     if not listing:
         return None
     for cand in _candidates(name):
@@ -159,33 +163,59 @@ def apply_sidecar(f, full_path: str, listing: set[str] | None = None) -> list[st
     return filled
 
 
+def apply_all(f, full: str, listing: set[str], xmp_meta: dict[str, dict] | None = None) -> dict[str, list[str]]:
+    """Apple .xmp first (deliberate corrections, override), then Takeout .json (fills what's still missing).
+    xmp_meta: pre-read sidecars {xmp path: parsed}; read here when not given."""
+    from .xmp import MARK, apply_xmp, find_xmp, read_xmp_batch
+
+    out: dict[str, list[str]] = {"xmp": [], "json": []}
+    if not listing:
+        return out
+    x = find_xmp(full, listing)
+    if x and MARK not in (f.exif or {}):
+        meta = (xmp_meta if xmp_meta is not None else read_xmp_batch([x])).get(x)
+        out["xmp"] = apply_xmp(f, meta, os.path.basename(x))
+    out["json"] = apply_sidecar(f, full, listing)
+    return out
+
+
 def backfill(session) -> dict[str, int]:
-    """Apply sidecars to already-processed files still missing a date or location (e.g. the JSON
-    files were copied in after the photos were indexed). Runs after every scan, so it stays cheap:
-    reads only paths, lists each folder once, and loads full rows only in folders that hold .json."""
+    """Apply sidecars that arrived after their photos were indexed. Runs after every scan, so it stays
+    cheap: reads paths only, lists each folder once, and loads full rows only in folders that hold
+    sidecars (.xmp: files not yet read; .json: files still missing a date or location)."""
     from collections import defaultdict
 
     from sqlalchemy import or_, select
 
     from ..models import File
     from ..paths import abs_path
+    from .xmp import MARK, find_xmp, read_xmp_batch
 
-    rows = session.execute(select(File.id, File.path).where(
+    rows = session.execute(select(File.id, File.path, or_(File.taken_at.is_(None), File.gps_lat.is_(None))).where(
         File.status.in_(("active", "pending_delete")), File.process_state == "done",
-        or_(File.taken_at.is_(None), File.gps_lat.is_(None)),
     )).all()
-    by_folder: dict[str, list[int]] = defaultdict(list)
-    for fid, path in rows:
-        by_folder[os.path.dirname(abs_path(path))].append(fid)
-    stats = {"checked": 0, "dates": 0, "locations": 0}
-    for folder, ids in by_folder.items():
-        listing = json_listing(folder)
+    by_folder: dict[str, list[tuple[int, bool]]] = defaultdict(list)
+    for fid, path, missing in rows:
+        by_folder[os.path.dirname(abs_path(path))].append((fid, bool(missing)))
+    stats = {"checked": 0, "dates": 0, "locations": 0, "xmp_read": 0, "xmp_dates": 0, "xmp_locations": 0}
+    for folder, entries in by_folder.items():
+        listing = sidecar_listing(folder)
         if not listing:
             continue
-        for f in session.scalars(select(File).where(File.id.in_(ids))):
+        has_xmp = any(n.lower().endswith(".xmp") for n in listing)
+        ids = [fid for fid, missing in entries if has_xmp or missing]
+        if not ids:
+            continue
+        files = list(session.scalars(select(File).where(File.id.in_(ids))))
+        todo = {f.id: find_xmp(abs_path(f.path), listing) for f in files if has_xmp and MARK not in (f.exif or {})}
+        meta = read_xmp_batch([x for x in todo.values() if x])
+        for f in files:
+            changed = apply_all(f, abs_path(f.path), listing, meta)
             stats["checked"] += 1
-            filled = apply_sidecar(f, abs_path(f.path), listing)
-            stats["dates"] += "date" in filled
-            stats["locations"] += "location" in filled
+            stats["xmp_read"] += bool(todo.get(f.id))
+            stats["xmp_dates"] += any(c.startswith("date") for c in changed["xmp"])
+            stats["xmp_locations"] += any(c.startswith("location") for c in changed["xmp"])
+            stats["dates"] += "date" in changed["json"]
+            stats["locations"] += "location" in changed["json"]
         session.commit()
     return stats

@@ -65,9 +65,17 @@ def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
         log.warning("exiftool batch failed: %s", exc)
         tags_by_path = {}
 
-    from .sidecar import apply_sidecar, json_listing
+    from .sidecar import apply_all, sidecar_listing
+    from .xmp import find_xmp, read_xmp_batch
 
-    listings: dict[str, set[str]] = {}  # folder -> its .json names (Google Takeout sidecars), read once per batch
+    # Sidecars (Google Takeout .json, Apple Photos .xmp): each folder listed once, all .xmp read in one go.
+    listings: dict[str, set[str]] = {}
+    for full in paths.values():
+        folder = os.path.dirname(full)
+        if folder not in listings:
+            listings[folder] = sidecar_listing(folder)
+    xmps = [find_xmp(full, listings[os.path.dirname(full)]) for full in paths.values()]
+    xmp_meta = read_xmp_batch([x for x in xmps if x])
     for f in files:
         full = paths[f.id]
         try:
@@ -83,11 +91,8 @@ def process_files(session: Session, file_ids: list[int]) -> dict[str, int]:
                 for key, value in parse_exif(tags).items():
                     if value is not None or key in ("gps_lat", "gps_lon", "taken_at", "live_photo_id"):
                         setattr(f, key, value)
-            folder = os.path.dirname(full)
-            if folder not in listings:
-                listings[folder] = json_listing(folder)
-            if listings[folder]:
-                apply_sidecar(f, full, listings[folder])  # Takeout: fill a missing date / location
+            # Apple .xmp corrections override; Takeout .json fills what's still missing.
+            apply_all(f, full, listings[os.path.dirname(full)], xmp_meta)
             if f.kind == "image":
                 _process_image(f, full)
             else:

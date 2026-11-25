@@ -95,18 +95,20 @@ def handle_scan(session: Session, job: Job) -> dict[str, Any]:
     from .scanner.sidecar import backfill
 
     res = scan(session)
-    takeout = backfill(session)  # Takeout .json copied in after their photos were indexed
+    side = backfill(session)  # Takeout .json / Apple .xmp copied in after their photos were indexed
     batches = enqueue_batches(session, res.to_process, "full", PROCESS_BATCH)
     if batches == 0:
         never_grouped = session.scalar(select(Job.id).where(Job.type == "group").limit(1)) is None
-        changed = res.new or res.changed or res.missing or res.returned or takeout["dates"]
+        changed = res.new or res.changed or res.missing or res.returned or side["dates"] or side["xmp_dates"]
         if changed or never_grouped or (job.payload or {}).get("force_group"):
             maybe_enqueue_group(session)
     return {
         "seen": res.seen, "new": res.new, "changed": res.changed, "missing": res.missing,
         "returned": res.returned, "batches": batches,
-        **({"takeout_dates": takeout["dates"], "takeout_locations": takeout["locations"]}
-           if takeout["dates"] or takeout["locations"] else {}),
+        **{k: v for k, v in (
+            ("takeout_dates", side["dates"]), ("takeout_locations", side["locations"]),
+            ("xmp_read", side["xmp_read"]), ("xmp_dates", side["xmp_dates"]), ("xmp_locations", side["xmp_locations"]),
+        ) if v},
     }
 
 

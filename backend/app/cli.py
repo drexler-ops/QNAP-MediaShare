@@ -37,7 +37,7 @@ def main() -> None:
     sub.add_parser("scan", help="queue a library scan now")
     sub.add_parser("regroup", help="queue duplicate regrouping now")
     sub.add_parser("previews", help="queue playable copies for every video that needs one (one-time catch-up)")
-    sub.add_parser("takeout", help="fill missing dates/locations from Google Takeout .json files next to photos")
+    sub.add_parser("takeout", help="apply sidecars next to photos: Apple Photos .xmp (dates/places) and Google Takeout .json")
     args = parser.parse_args()
 
     with session_scope() as s:
@@ -70,9 +70,10 @@ def main() -> None:
             from .scanner.sidecar import backfill
 
             res = backfill(s)
-            print(f"checked {res['checked']} files next to .json sidecars: "
-                  f"{res['dates']} dates and {res['locations']} locations filled")
-            if res["dates"]:
+            print(f"checked {res['checked']} files beside sidecars. Google Takeout: {res['dates']} dates, "
+                  f"{res['locations']} locations filled. Apple Photos .xmp: {res['xmp_read']} read, "
+                  f"{res['xmp_dates']} dates and {res['xmp_locations']} locations set")
+            if res["dates"] or res["xmp_dates"]:
                 enqueue(s, "group", unique=True)  # new dates can form burst groups
                 print("regroup queued")
 

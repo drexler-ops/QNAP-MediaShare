@@ -19,8 +19,15 @@ A self-hosted web app for a shared NAS media library (built and tested for QNAP,
 - **Phones and tablets.** Slide-out menu below 1024 px (☰ or swipe from the left edge), viewer gestures (double-tap zoom, swipe for next/previous, swipe down to close), long-press to select, one-card-per-screen Review carousel, larger tap targets on touch screens.
 - **Upload from devices.** PC drag-and-drop or phone/tablet photo picker; resumable 8 MB chunks; saved to `<user folder>/Uploads/<YYYY-MM>/` by capture month; exact duplicates skipped; processed immediately.
 - **Albums and sharing.** Hand-picked albums (select in Browse, or press `A` in the viewer), drag to reorder, cover photo. Albums can be private, shared with other users (view or edit), or shared publicly with a link (optional expiry, password, per-link downloads incl. ZIP; revocable). Public links are served by a separate share-only container that exposes nothing else. If a photo in an album is approved for deletion as a duplicate, the album switches to the kept copy.
-- **Other pages:** Browse (filters for owner, date, camera, EXIF, GPS, Live Photos), Map (Leaflet clusters), Settings (thresholds, keeper weights, users and folders (admin), scan schedule, system status).
-- **v2 (not built yet):** face recognition. The schema already has `people`/`faces` placeholders.
+- **Other pages:** Browse (filters for owner, date, camera, EXIF, GPS, Live Photos), Map (Leaflet clusters), Settings (thresholds, keeper weights, users and folders (admin), scan schedule, system status, live NAS resources for admins).
+
+## Importing from Apple Photos / iPhoto and Google Photos
+
+Copy exports into the owner's folder (Finder: **Go → Connect to Server → `smb://<nas>/<share>`**), then **Scan now** in Settings. Sidecar files sitting beside the photos are read automatically, including ones copied in after the photos were indexed (each scan catches up).
+
+- **Apple Photos / iPhoto.** Open the iPhoto library in Photos (it converts it), select all, **File → Export → Export Unmodified Originals** with **Export IPTC as XMP** on, File Name "Use File Name", Subfolder Format "Moment Name". You get the camera originals (full EXIF, HEIC, Live Photo pairs) plus `NAME.xmp` with what was set in Photos. Dates and locations from the `.xmp` **override** the file's own (they are deliberate corrections: wrong camera clocks, scanned prints, places added later); title, caption and keywords appear in the photo's details. Edits (crops, filters) are not part of an unmodified export; export the edited versions to a separate folder if wanted, and Review pairs each with its original.
+- **Google Takeout.** Extract every zip of the export into the *same* folder so each photo sits beside its `….supplemental-metadata.json`. The JSON only **fills** a missing date or location; the photo's own metadata wins.
+- Run `python -m app.cli takeout` in the worker container to apply sidecars immediately instead of waiting for the next scan.
 
 ## Configuration
 
