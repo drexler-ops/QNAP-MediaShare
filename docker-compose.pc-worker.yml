@@ -20,7 +20,8 @@ services:
       LIBRARY_ROOT: /library
       THUMBS_ROOT: /thumbs
       QUARANTINE_DIRNAME: ${QUARANTINE_DIRNAME:-.quarantine}
-      WORKER_NAME: pc
+      # Unique per helper PC when several run at once (shown in Settings; a restart requeues only its own jobs)
+      WORKER_NAME: ${PC_WORKER_NAME:-pc}
       WORKER_CONCURRENCY: ${PC_WORKER_CONCURRENCY:-4}
       SCHEDULER_ENABLED: "false"
       RUN_MIGRATIONS: "false"

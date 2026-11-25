@@ -148,6 +148,7 @@ This PC runs a second worker to help with the first index of a large library. It
    SMB_USER=photoaudit
    SMB_PASSWORD=<the photoaudit password>
    PC_WORKER_CONCURRENCY=7                     # logical CPU cores minus 1 (Task Manager -> Performance -> CPU)
+   PC_WORKER_NAME=pc                           # give each helper its own name if more than one runs at once
    ```
 
 6. **Keep the PC awake.** Go to **Settings → System → Power** and set *Screen and sleep* to **Never** while the scan runs.

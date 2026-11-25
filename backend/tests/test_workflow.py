@@ -176,3 +176,21 @@ def test_quarantine_name_collisions(session, users):
     open(clash, "wb").close()
     workflow.approve(session, sam, [d.id])
     assert session.get(File, b.id).path.endswith("dup__1.jpg")
+
+
+def test_restarting_worker_requeues_only_its_own_jobs(session):
+    from app.jobs import reset_stale
+    from app.models import Job
+
+    now = datetime.now()
+    jobs = {w: Job(type="process", state="running", worker=w, started_at=now, payload={})
+            for w in ("pc-1", "pc-12", "pc-office-1", "pc_2", "nas-0")}
+    old = Job(type="process", state="running", worker="nas-1", started_at=now - timedelta(hours=7), payload={})
+    session.add_all([*jobs.values(), old])
+    session.commit()
+    assert reset_stale(session, "pc") == 3  # pc-1, pc-12 and the 7-hour-old job
+    for w, j in jobs.items():
+        session.refresh(j)
+        assert (j.state == "queued") == (w in ("pc-1", "pc-12")), w
+    session.refresh(old)
+    assert old.state == "queued" and old.worker is None

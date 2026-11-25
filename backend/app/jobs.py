@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import traceback
 from datetime import datetime, timedelta
 from typing import Any, Callable
@@ -56,16 +57,17 @@ def claim(session: Session, worker: str) -> Job | None:
 
 
 def reset_stale(session: Session, worker_prefix: str) -> int:
-    """Requeue jobs left 'running' by a crashed/restarted worker."""
+    """Requeue jobs left 'running' by a crashed/restarted worker: this worker's own processes (exactly
+    "<name>-<n>", so helper "pc" never touches helper "pc-office"'s jobs), or anything stuck over 6 h."""
     cutoff = datetime.now() - timedelta(hours=6)
-    res = session.execute(
-        update(Job)
-        .where(Job.state == "running")
-        .where((Job.worker.like(f"{worker_prefix}-%")) | (Job.started_at < cutoff))
-        .values(state="queued", worker=None)
-    )
+    own = re.compile(rf"{re.escape(worker_prefix)}-\d+")
+    ids = [jid for jid, worker, started in session.execute(
+        select(Job.id, Job.worker, Job.started_at).where(Job.state == "running")
+    ) if (worker and own.fullmatch(worker)) or (started is not None and started < cutoff)]
+    if ids:
+        session.execute(update(Job).where(Job.id.in_(ids)).values(state="queued", worker=None))
     session.commit()
-    return res.rowcount or 0
+    return len(ids)
 
 
 def maybe_enqueue_group(session: Session, exclude_job_id: int | None = None) -> bool:
