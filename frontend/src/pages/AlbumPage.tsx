@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, post, type AlbumDetail, type Me, type ShareLinkInfo, type UserRow } from "../api";
 import { useViewer } from "../components/MediaViewer";
+import { SlideshowButton } from "../components/Slideshow";
+import { internalUrls } from "../media-urls";
 import { Confirm, Loading, Modal, Pager, pageCount, Thumb, useAppConfig, usePageParam, useTileSelection, useToast } from "../ui";
 import { cls, date } from "../util";
 
@@ -121,6 +123,7 @@ export default function AlbumPage({ me }: { me: Me }) {
         </div>
         {!editing && (
           <div className="row">
+            {!selecting && <SlideshowButton items={items} urls={internalUrls} title={a.title} />}
             {isOwner && <button className="btn" onClick={() => { setTitle(a.title); setDesc(a.description ?? ""); setEditing(true); }}>Rename</button>}
             {canEdit && a.count > 0 && (
               <button className={cls("btn", selecting && "primary")} onClick={() => (selecting ? sel.stop() : sel.start())}>

@@ -105,7 +105,7 @@ export function VideoPlayer({ file, autoPlay, loop, customControls }: { file: Fi
 }
 
 let hevcSupport: boolean | null = null;
-function canPlayHevc(): boolean {
+export function canPlayHevc(): boolean {
   if (hevcSupport === null) {
     const v = document.createElement("video");
     hevcSupport = !!(v.canPlayType('video/mp4; codecs="hvc1"') || v.canPlayType('video/mp4; codecs="hev1.1.6.L93.B0"'));

@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { api, ApiError, post, type FileInfo, type ItemInfo, type PublicAlbum as PublicAlbumData, type PublicItem } from "../api";
 import { useViewer } from "../components/MediaViewer";
+import { SlideshowButton } from "../components/Slideshow";
 import { shareUrls } from "../media-urls";
 import { Pager, pageCount, Spinner, usePageParam } from "../ui";
 import { date, duration } from "../util";
@@ -109,9 +110,12 @@ export default function PublicAlbum() {
             {a.expires_at && ` · link available until ${date(a.expires_at, false)}`}
           </div>
         </div>
-        {a.allow_download && a.items.length > 0 && (
-          <a className="btn primary" href={`/api/public/s/${encodeURIComponent(token)}/download.zip`}>⤓ Download all</a>
-        )}
+        <div className="row">
+          <SlideshowButton items={entries.map((e) => e.info)} urls={urls} title={a.title} />
+          {a.allow_download && a.items.length > 0 && (
+            <a className="btn primary" href={`/api/public/s/${encodeURIComponent(token)}/download.zip`}>⤓ Download all</a>
+          )}
+        </div>
       </header>
       {a.items.length === 0 ? (
         <div className="card empty">This album is empty.</div>
