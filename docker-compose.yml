@@ -97,7 +97,7 @@ services:
       PGPASSWORD: ${DB_PASSWORD}
       TZ: ${TZ:-UTC}
       DB_BACKUP_TIME: ${DB_BACKUP_TIME:-01:30}
-      DB_BACKUP_KEEP: ${DB_BACKUP_KEEP:-14}
+      DB_BACKUP_KEEP: ${DB_BACKUP_KEEP:-7}
     volumes:
       - ./deploy/dbbackup/backup.sh:/backup.sh:ro
       - ${DB_BACKUP_PATH:-../backups}:/backups

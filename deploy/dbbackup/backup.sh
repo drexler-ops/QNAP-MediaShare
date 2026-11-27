@@ -11,7 +11,7 @@
 set -eu
 DIR=/backups
 TIME="${DB_BACKUP_TIME:-01:30}"
-KEEP="${DB_BACKUP_KEEP:-14}"
+KEEP="${DB_BACKUP_KEEP:-7}"
 umask 077 # the dump holds password hashes and share-link tokens: readable by the backup job (root) only
 
 snapshot() {

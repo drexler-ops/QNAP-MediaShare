@@ -269,7 +269,7 @@ Database changes are applied automatically when the app starts.
 
 ## Backups
 
-**Database.** The `dbbackup` service saves a compressed snapshot of the database (every decision, album, face name and the audit log) every night at `DB_BACKUP_TIME` (default `01:30`, in `TZ`) and keeps the newest `DB_BACKUP_KEEP` (default 14). They go to `DB_BACKUP_PATH`, by default the `backups` folder **next to** the app folder (e.g. `/share/Container/photo-audit/backups`), never inside it, because updates replace the app folder. If the NAS was off at snapshot time, one is taken when it starts. `LAST_SUCCESS` in that folder shows the time of the last good snapshot; `docker compose logs dbbackup` shows the history. Take one immediately with:
+**Database.** The `dbbackup` service saves a compressed snapshot of the database (every decision, album, face name and the audit log) every night at `DB_BACKUP_TIME` (default `01:30`, in `TZ`) and keeps the newest `DB_BACKUP_KEEP` (default 7). They go to `DB_BACKUP_PATH`, by default the `backups` folder **next to** the app folder (e.g. `/share/Container/photo-audit/backups`), never inside it, because updates replace the app folder. If the NAS was off at snapshot time, one is taken when it starts. `LAST_SUCCESS` in that folder shows the time of the last good snapshot; `docker compose logs dbbackup` shows the history. Take one immediately with:
 ```sh
 cd <app-dir> && docker compose exec dbbackup sh /backup.sh now
 ```
