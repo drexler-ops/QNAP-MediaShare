@@ -56,6 +56,7 @@ Everything deployment-specific is an environment variable in `.env` (template: [
 | `FACE_THREADS` | `2` | CPU threads per worker process for face detection/recognition |
 | `MAX_UPLOAD_MB` | `20480` | Largest single upload |
 | `EXTRA_VOLUME_PATH`, `EXTRA_VOLUME_LABEL` | —, `Second volume` | Another volume shown (free space only, read-only mount) in Settings → NAS resources |
+| `DB_BACKUP_PATH`, `DB_BACKUP_TIME`, `DB_BACKUP_KEEP` | `../backups`, `01:30`, `14` | Nightly database snapshots: folder on the host (outside the app folder), time of day (in `TZ`), how many to keep. See INSTALL.md "Backups" |
 | `DB_SHARED_BUFFERS`, `DB_MEM_LIMIT`, `API_MEM_LIMIT`, `WORKER_MEM_LIMIT` | `512MB`, `1g`, `1g`, `2g` | Resource tuning |
 
 Helper-PC worker ([.env.pc-worker.example](.env.pc-worker.example)): `NAS_IP`, `DB_PORT`, `DB_PASSWORD`, `SMB_LIBRARY_SHARE`, `SMB_THUMBS_PATH`, `SMB_USER`, `SMB_PASSWORD`, `SMB_VERSION`, `QUARANTINE_DIRNAME`, `PC_WORKER_CONCURRENCY`, `PC_WORKER_NAME` (unique per helper when several run at once).

@@ -269,12 +269,26 @@ Database changes are applied automatically when the app starts.
 
 ## Backups
 
-The database holds every decision and the audit log. Back it up occasionally:
+**Database.** The `dbbackup` service saves a compressed snapshot of the database (every decision, album, face name and the audit log) every night at `DB_BACKUP_TIME` (default `01:30`, in `TZ`) and keeps the newest `DB_BACKUP_KEEP` (default 14). They go to `DB_BACKUP_PATH`, by default the `backups` folder **next to** the app folder (e.g. `/share/Container/photo-audit/backups`), never inside it, because updates replace the app folder. If the NAS was off at snapshot time, one is taken when it starts. `LAST_SUCCESS` in that folder shows the time of the last good snapshot; `docker compose logs dbbackup` shows the history. Take one immediately with:
+```sh
+cd <app-dir> && docker compose exec dbbackup sh /backup.sh now
+```
+
+**Whole NAS.** Back up, with your NAS's backup app (QNAP: Hybrid Backup Sync, on a schedule *after* `DB_BACKUP_TIME`) to a USB drive, another NAS or the cloud:
+- the photo library (`LIBRARY_PATH`), including the quarantine folder;
+- `DB_BACKUP_PATH` (the snapshots);
+- the app's `.env` (holds the passwords; keep the backup private).
+
+Thumbnails, previews and face crops (`THUMBS_PATH`) can be regenerated, so backing them up is optional; it just saves days of re-processing after a restore. Don't back up the database's own Docker volume: copying a running database's files doesn't give a usable backup; the snapshots do.
+
+**Restore the database** (new NAS or after a failure): install the app as in section A with the backed-up `.env`, start it once so the database exists, then:
 ```sh
 cd <app-dir>
-docker compose exec -T db pg_dump -U photoaudit photoaudit | gzip > ../backup-$(date +%F).sql.gz
+docker compose stop api worker
+docker compose exec dbbackup pg_restore -h db -U photoaudit -d photoaudit --clean --if-exists --no-owner /backups/photoaudit-YYYY-MM-DD_HHMM.dump
+docker compose start api worker
 ```
-You can regenerate thumbnails at any time, so they don't need a backup.
+(Copy the snapshot into `DB_BACKUP_PATH` first. Then restore the photo library to the same `LIBRARY_PATH` so file paths match, and press **Scan now**; missing thumbnails are rebuilt automatically.)
 
 ## Troubleshooting
 

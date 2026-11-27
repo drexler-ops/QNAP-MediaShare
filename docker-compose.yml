@@ -85,6 +85,24 @@ services:
       - models:/models
     mem_limit: ${WORKER_MEM_LIMIT:-2g}
 
+  # Nightly database snapshots (pg_dump) for the NAS backup job to pick up: see INSTALL.md "Backups".
+  # DB_BACKUP_PATH must be OUTSIDE the app folder (that folder is replaced on every update).
+  dbbackup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    entrypoint: ["sh", "/backup.sh"]
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+      TZ: ${TZ:-UTC}
+      DB_BACKUP_TIME: ${DB_BACKUP_TIME:-01:30}
+      DB_BACKUP_KEEP: ${DB_BACKUP_KEEP:-14}
+    volumes:
+      - ./deploy/dbbackup/backup.sh:/backup.sh:ro
+      - ${DB_BACKUP_PATH:-../backups}:/backups
+    mem_limit: 256m
+
   # Optional public share-link service (COMPOSE_PROFILES=public). Same image in share-only mode:
   # serves ONLY /s/<token> album pages and their media; no sign-in, no API, no other pages.
   # This is the only thing that should ever face the internet.
